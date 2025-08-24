@@ -1,0 +1,827 @@
+"""
+HTML Report Generator Module
+
+This module generates professional HTML reports from Excel comparison results.
+It creates beautiful, interactive reports suitable for stakeholders and documentation.
+"""
+
+import logging
+from typing import Dict, List, Optional
+from datetime import datetime
+from pathlib import Path
+
+from data_models import ComparisonResult, TabComparison, MappingChange
+
+logger = logging.getLogger(__name__)
+
+
+class HTMLReportGenerator:
+    """
+    Generates professional HTML reports from Excel comparison results.
+    """
+    
+    def __init__(self):
+        self.template_cache = {}
+        
+    def generate_report(self, comparison_result: ComparisonResult, 
+                       output_path: str, 
+                       report_title: Optional[str] = None) -> bool:
+        """
+        Generate a complete HTML report from comparison results.
+        
+        Args:
+            comparison_result: The comparison results to report on
+            output_path: Path where the HTML report will be saved
+            report_title: Optional custom title for the report
+            
+        Returns:
+            True if report generated successfully, False otherwise
+        """
+        try:
+            logger.info(f"Generating HTML report: {output_path}")
+            
+            # Ensure output directory exists
+            output_dir = Path(output_path).parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate the complete HTML content
+            html_content = self._build_html_report(comparison_result, report_title)
+            
+            # Write to file
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+                
+            logger.info(f"HTML report generated successfully: {output_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to generate HTML report: {e}")
+            return False
+    
+    def _build_html_report(self, result: ComparisonResult, title: Optional[str] = None) -> str:
+        """
+        Build the complete HTML report structure.
+        
+        Args:
+            result: Comparison results
+            title: Optional custom title
+            
+        Returns:
+            Complete HTML document as string
+        """
+        # Extract file names for display
+        file1_name = Path(result.file1_path).name if result.file1_path else "File 1"
+        file2_name = Path(result.file2_path).name if result.file2_path else "File 2"
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%B %d, %Y - %I:%M %p")
+        
+        # Use custom title or generate default
+        if not title:
+            title = f"Excel Source-Target Mapping Comparison Report"
+        
+        # Build HTML sections
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    {self._get_css_styles()}
+</head>
+<body>
+    <div class="container">
+        {self._build_header(title, file1_name, file2_name)}
+        {self._build_report_info(result, timestamp)}
+        {self._build_executive_summary(result)}
+        {self._build_detailed_changes(result)}
+    </div>
+    {self._build_footer()}
+    {self._get_javascript()}
+</body>
+</html>"""
+        
+        return html_content
+    
+    def _build_header(self, title: str, file1_name: str, file2_name: str) -> str:
+        """Build the header section."""
+        return f"""
+        <!-- Header Section -->
+        <div class="header">
+            <h1>{title}</h1>
+            <div class="subtitle">Detailed analysis of changes between workbook versions</div>
+        </div>"""
+    
+    def _build_report_info(self, result: ComparisonResult, timestamp: str) -> str:
+        """Build the report information panel."""
+        file1_name = Path(result.file1_path).name if result.file1_path else "File 1"
+        file2_name = Path(result.file2_path).name if result.file2_path else "File 2"
+        
+        return f"""
+        <!-- Report Information -->
+        <div class="report-info">
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Original File</div>
+                    <div class="info-value">{file1_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Modified File</div>
+                    <div class="info-value">{file2_name}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Comparison Date</div>
+                    <div class="info-value">{timestamp}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Generated By</div>
+                    <div class="info-value">Excel Comparison Tool v2.0</div>
+                </div>
+            </div>
+        </div>"""
+    
+    def _build_executive_summary(self, result: ComparisonResult) -> str:
+        """Build the executive summary dashboard."""
+        summary = result.summary
+        
+        # Calculate total changes
+        total_changes = (summary.tabs_added + summary.tabs_deleted + 
+                        summary.tabs_modified + summary.total_mappings_added +
+                        summary.total_mappings_deleted + summary.total_mappings_modified)
+        
+        return f"""
+        <!-- Executive Summary -->
+        <div class="summary-section">
+            <h2 class="section-title">📊 Executive Summary</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-card changes">
+                    <div class="stat-number green">{total_changes}</div>
+                    <div class="stat-label">Total Changes</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{summary.total_tabs_v1} → {summary.total_tabs_v2}</div>
+                    <div class="stat-label">Total Tabs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{summary.total_mappings_v1} → {summary.total_mappings_v2}</div>
+                    <div class="stat-label">Total Mappings</div>
+                </div>
+                <div class="stat-card additions">
+                    <div class="stat-number blue">{summary.total_mappings_added}</div>
+                    <div class="stat-label">Added Mappings</div>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">{summary.tabs_modified}</div>
+                    <div class="stat-label">Modified Tabs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">{summary.tabs_unchanged}</div>
+                    <div class="stat-label">Unchanged Tabs</div>
+                </div>
+                <div class="stat-card deletions">
+                    <div class="stat-number red">{summary.total_mappings_deleted}</div>
+                    <div class="stat-label">Deleted Mappings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number green">{summary.total_mappings_modified}</div>
+                    <div class="stat-label">Modified Mappings</div>
+                </div>
+            </div>
+        </div>"""
+    
+    def _build_detailed_changes(self, result: ComparisonResult) -> str:
+        """Build the detailed changes section."""
+        changes_html = """
+        <!-- Detailed Changes -->
+        <div class="changes-section">
+            <h2 class="section-title">🔍 Detailed Changes</h2>"""
+        
+        # Process changed tabs first
+        changed_tabs = [(name, comp) for name, comp in result.tab_comparisons.items() 
+                       if comp.has_changes]
+        
+        for tab_name, tab_comparison in changed_tabs:
+            changes_html += self._build_tab_change_section(tab_name, tab_comparison)
+        
+        # Add unchanged tabs summary if there are any
+        unchanged_tabs = [name for name, comp in result.tab_comparisons.items() 
+                         if not comp.has_changes]
+        
+        if unchanged_tabs:
+            changes_html += self._build_unchanged_tabs_section(unchanged_tabs)
+        
+        changes_html += "\n        </div>"
+        return changes_html
+    
+    def _build_tab_change_section(self, tab_name: str, tab_comparison: TabComparison) -> str:
+        """Build a section for a single changed tab."""
+        # Determine badge style and content
+        badge_info = self._get_change_badge_info(tab_comparison)
+        
+        # Build the tab section
+        tab_html = f"""
+            <!-- Tab: {tab_name} -->
+            <div class="tab-change">
+                <div class="tab-header collapsible" onclick="toggleContent(this)">
+                    <div class="tab-name">📋 {tab_name}</div>
+                    <div class="change-badge {badge_info['class']}">{badge_info['text']}</div>
+                </div>
+                <div class="content">
+                    <div class="tab-details">
+                        <p><strong>Change Summary:</strong> {self._get_change_summary_text(tab_comparison)}</p>
+                        
+                        {self._build_mapping_tables(tab_comparison)}
+                    </div>
+                </div>
+            </div>"""
+        
+        return tab_html
+    
+    def _get_change_badge_info(self, tab_comparison: TabComparison) -> Dict[str, str]:
+        """Get badge styling information for a tab comparison."""
+        changes = tab_comparison.change_summary
+        added = changes['added']
+        deleted = changes['deleted'] 
+        modified = changes['modified']
+        
+        # Determine badge style based on change types
+        if added > 0 and deleted == 0 and modified == 0:
+            return {'class': 'badge-added', 'text': f'+{added} Added'}
+        elif added == 0 and deleted > 0 and modified == 0:
+            return {'class': 'badge-deleted', 'text': f'-{deleted} Deleted'}
+        elif added == 0 and deleted == 0 and modified > 0:
+            return {'class': 'badge-modified', 'text': f'~{modified} Modified'}
+        else:
+            # Mixed changes - use gradient style
+            parts = []
+            if added > 0:
+                parts.append(f'+{added}')
+            if modified > 0:
+                parts.append(f'~{modified}')
+            if deleted > 0:
+                parts.append(f'-{deleted}')
+            
+            return {
+                'class': 'badge-mixed', 
+                'text': f"{' '.join(parts)} Mixed"
+            }
+    
+    def _get_change_summary_text(self, tab_comparison: TabComparison) -> str:
+        """Generate human-readable change summary text."""
+        changes = tab_comparison.change_summary
+        added = changes['added']
+        deleted = changes['deleted']
+        modified = changes['modified']
+        
+        parts = []
+        if added > 0:
+            parts.append(f"{added} mapping{'s' if added != 1 else ''} added")
+        if deleted > 0:
+            parts.append(f"{deleted} mapping{'s' if deleted != 1 else ''} deleted") 
+        if modified > 0:
+            parts.append(f"{modified} mapping{'s' if modified != 1 else ''} modified")
+        
+        if len(parts) == 1:
+            return parts[0].capitalize()
+        elif len(parts) == 2:
+            return f"{parts[0].capitalize()} and {parts[1]}"
+        else:
+            return f"{', '.join(parts[:-1]).capitalize()}, and {parts[-1]}"
+    
+    def _build_mapping_tables(self, tab_comparison: TabComparison) -> str:
+        """Build mapping tables for different change types."""
+        tables_html = ""
+        
+        # Added mappings table
+        if tab_comparison.added_mappings:
+            tables_html += self._build_added_mappings_table(tab_comparison.added_mappings)
+        
+        # Deleted mappings table  
+        if tab_comparison.deleted_mappings:
+            tables_html += self._build_deleted_mappings_table(tab_comparison.deleted_mappings)
+        
+        # Modified mappings table
+        if tab_comparison.modified_mappings:
+            tables_html += self._build_modified_mappings_table(tab_comparison.modified_mappings)
+        
+        return tables_html
+    
+    def _build_added_mappings_table(self, added_mappings: List) -> str:
+        """Build table for added mappings."""
+        if not added_mappings:
+            return ""
+            
+        table_html = """
+                        <table class="mapping-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Source System</th>
+                                    <th>Source Field</th>
+                                    <th>Target System</th>
+                                    <th>Target Field</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>"""
+        
+        for mapping in added_mappings:
+            # Get description from all_fields if available
+            description = ""
+            if hasattr(mapping, 'all_fields') and mapping.all_fields:
+                description = mapping.all_fields.get('source_description', '') or mapping.all_fields.get('description', '')
+            
+            if not description:
+                description = "New mapping added"
+            
+            table_html += f"""
+                                <tr>
+                                    <td><span class="change-indicator added"></span>Added</td>
+                                    <td>{mapping.source_canonical or ''}</td>
+                                    <td>{mapping.source_field or ''}</td>
+                                    <td>{mapping.target_canonical or ''}</td>
+                                    <td>{mapping.target_field or ''}</td>
+                                    <td>{description}</td>
+                                </tr>"""
+        
+        table_html += """
+                            </tbody>
+                        </table>"""
+        
+        return table_html
+    
+    def _build_deleted_mappings_table(self, deleted_mappings: List) -> str:
+        """Build table for deleted mappings."""
+        if not deleted_mappings:
+            return ""
+            
+        table_html = """
+                        <table class="mapping-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Source System</th>
+                                    <th>Source Field</th>
+                                    <th>Target System</th>
+                                    <th>Target Field</th>
+                                    <th>Reason</th>
+                                </tr>
+                            </thead>
+                            <tbody>"""
+        
+        for mapping in deleted_mappings:
+            # Generic reason for deletion
+            reason = "Mapping removed"
+            
+            table_html += f"""
+                                <tr>
+                                    <td><span class="change-indicator deleted"></span>Deleted</td>
+                                    <td>{mapping.source_canonical or ''}</td>
+                                    <td>{mapping.source_field or ''}</td>
+                                    <td>{mapping.target_canonical or ''}</td>
+                                    <td>{mapping.target_field or ''}</td>
+                                    <td>{reason}</td>
+                                </tr>"""
+        
+        table_html += """
+                            </tbody>
+                        </table>"""
+        
+        return table_html
+    
+    def _build_modified_mappings_table(self, modified_mappings: List[MappingChange]) -> str:
+        """Build table for modified mappings."""
+        if not modified_mappings:
+            return ""
+            
+        table_html = """
+                        <table class="mapping-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Source System</th>
+                                    <th>Source Field</th>
+                                    <th>Target System</th>
+                                    <th>Target Field</th>
+                                    <th>Changes</th>
+                                </tr>
+                            </thead>
+                            <tbody>"""
+        
+        for mapping_change in modified_mappings:
+            mapping = mapping_change.mapping
+            
+            # Build change description
+            changes_desc = self._format_field_changes(mapping_change.field_changes)
+            
+            table_html += f"""
+                                <tr>
+                                    <td><span class="change-indicator modified"></span>Modified</td>
+                                    <td>{mapping.source_canonical or ''}</td>
+                                    <td>{mapping.source_field or ''}</td>
+                                    <td>{mapping.target_canonical or ''}</td>
+                                    <td>{mapping.target_field or ''}</td>
+                                    <td>{changes_desc}</td>
+                                </tr>"""
+        
+        table_html += """
+                            </tbody>
+                        </table>"""
+        
+        return table_html
+    
+    def _format_field_changes(self, field_changes: Dict) -> str:
+        """Format field changes into readable text."""
+        if not field_changes:
+            return "No specific changes recorded"
+        
+        change_parts = []
+        for field_name, change_info in field_changes.items():
+            old_val = change_info.get('old', '')
+            new_val = change_info.get('new', '')
+            
+            # Truncate long values
+            if len(str(old_val)) > 30:
+                old_val = str(old_val)[:27] + "..."
+            if len(str(new_val)) > 30:
+                new_val = str(new_val)[:27] + "..."
+            
+            # Format field name for display
+            display_name = field_name.replace('_', ' ').title()
+            change_parts.append(f'{display_name}: "{old_val}" → "{new_val}"')
+        
+        return ', '.join(change_parts)
+    
+    def _build_unchanged_tabs_section(self, unchanged_tabs: List[str]) -> str:
+        """Build section for unchanged tabs."""
+        tabs_list = '\n'.join([f'                            <li>{tab}</li>' 
+                              for tab in unchanged_tabs])
+        
+        return f"""
+            <!-- Unchanged Tabs Summary -->
+            <div class="tab-change">
+                <div class="tab-header collapsible" onclick="toggleContent(this)">
+                    <div class="tab-name">✅ Unchanged Tabs ({len(unchanged_tabs)})</div>
+                    <div class="change-badge badge-unchanged">No Changes</div>
+                </div>
+                <div class="content">
+                    <div class="tab-details">
+                        <p>The following tabs had no changes:</p>
+                        <ul style="margin: 15px 0; padding-left: 25px;">
+{tabs_list}
+                        </ul>
+                    </div>
+                </div>
+            </div>"""
+    
+    def _build_technical_details(self, result: ComparisonResult) -> str:
+        """Build the technical details section."""
+        processing_time = "< 1 second"  # Could be enhanced to track actual time
+        
+        return f"""
+        <!-- Technical Details -->
+        <div class="summary-section">
+            <h2 class="section-title">⚙️ Technical Details</h2>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Comparison Method</div>
+                    <div class="info-value">Content-based unique ID matching</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Position Independence</div>
+                    <div class="info-value">Enabled - handles row reordering</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Hidden Tabs</div>
+                    <div class="info-value">Skipped by default configuration</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Processing Time</div>
+                    <div class="info-value">{processing_time}</div>
+                </div>
+            </div>
+        </div>"""
+    
+    def _build_footer(self) -> str:
+        """Build the footer section."""
+        timestamp = datetime.now().strftime("%B %d, %Y at %I:%M:%S %p")
+        
+        return f"""
+    <div class="footer">
+        <p>Generated by Excel Source-Target Mapping Comparison Tool | Claude Code v2.0</p>
+        <p>Report generated on {timestamp}</p>
+    </div>"""
+    
+    def _get_css_styles(self) -> str:
+        """Get the CSS styles for the HTML report."""
+        return """
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 2.2em;
+            margin-bottom: 10px;
+        }
+        
+        .header .subtitle {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .report-info {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        
+        .info-item {
+            padding: 15px;
+            border-left: 4px solid #667eea;
+            background: #f8f9ff;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 1.1em;
+            color: #333;
+        }
+        
+        .summary-section {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .section-title {
+            font-size: 1.5em;
+            color: #333;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .stat-card {
+            text-align: center;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e1e5e9;
+        }
+        
+        .stat-card.changes {
+            border-color: #28a745;
+            background: #f8fff9;
+        }
+        
+        .stat-card.additions {
+            border-color: #007bff;
+            background: #f8fbff;
+        }
+        
+        .stat-card.deletions {
+            border-color: #dc3545;
+            background: #fff8f8;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .stat-number.green { color: #28a745; }
+        .stat-number.blue { color: #007bff; }
+        .stat-number.red { color: #dc3545; }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .changes-section {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .tab-change {
+            border: 1px solid #e1e5e9;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        
+        .tab-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e1e5e9;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+        }
+        
+        .tab-name {
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        
+        .change-badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            color: white;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .badge-added { background: #007bff; }
+        .badge-deleted { background: #dc3545; }
+        .badge-modified { background: #28a745; }
+        .badge-mixed { background: linear-gradient(45deg, #007bff, #28a745, #dc3545); }
+        .badge-unchanged { background: #6c757d; }
+        
+        .tab-details {
+            padding: 20px;
+            background: white;
+        }
+        
+        .mapping-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        
+        .mapping-table th,
+        .mapping-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e1e5e9;
+        }
+        
+        .mapping-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        .mapping-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .change-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .added { background: #007bff; }
+        .deleted { background: #dc3545; }
+        .modified { background: #28a745; }
+        
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        @media print {
+            .container {
+                max-width: none;
+                margin: 0;
+                padding: 10px;
+            }
+            
+            .header {
+                background: #667eea !important;
+                -webkit-print-color-adjust: exact;
+            }
+        }
+        
+        .collapsible {
+            cursor: pointer;
+        }
+        
+        .collapsible:after {
+            content: '\\002B';
+            color: #777;
+            font-weight: bold;
+            float: right;
+            margin-left: 5px;
+        }
+        
+        .active:after {
+            content: "\\2212";
+        }
+        
+        .content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease-out;
+        }
+        
+        .content.active {
+            max-height: 2000px;
+        }
+    </style>"""
+    
+    def _get_javascript(self) -> str:
+        """Get the JavaScript for interactive functionality."""
+        return """
+    <script>
+        function toggleContent(element) {
+            element.classList.toggle("active");
+            var content = element.nextElementSibling;
+            content.classList.toggle("active");
+            
+            if (content.classList.contains("active")) {
+                content.style.maxHeight = content.scrollHeight + "px";
+            } else {
+                content.style.maxHeight = "0";
+            }
+        }
+
+        // Auto-expand first change section
+        document.addEventListener('DOMContentLoaded', function() {
+            const firstCollapsible = document.querySelector('.collapsible');
+            if (firstCollapsible) {
+                toggleContent(firstCollapsible);
+            }
+        });
+    </script>"""
+
+
+# Convenience function for easy report generation
+def generate_html_report(comparison_result: ComparisonResult, 
+                        output_path: str,
+                        title: Optional[str] = None) -> bool:
+    """
+    Convenience function to generate an HTML report.
+    
+    Args:
+        comparison_result: The comparison results to report on
+        output_path: Path where the HTML report will be saved
+        title: Optional custom title for the report
+        
+    Returns:
+        True if report generated successfully, False otherwise
+    """
+    generator = HTMLReportGenerator()
+    return generator.generate_report(comparison_result, output_path, title)

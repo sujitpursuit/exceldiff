@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
