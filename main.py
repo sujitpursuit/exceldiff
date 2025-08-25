@@ -19,6 +19,7 @@ from typing import Optional, Tuple
 # Local imports
 from comparator import compare_workbooks
 from report_generator import generate_html_report
+from json_report_generator import generate_json_report
 from utils import validate_file_path
 from exceptions import (
     ExcelComparisonError, FileValidationError, ComparisonError,
@@ -352,13 +353,29 @@ Examples:
                     file2=Path(self.args.file2).name
                 )
             
-            # Generate the report
+            # Generate the HTML report
             with PerformanceTimer(self.logger, "HTML report generation", output_path):
                 success = generate_html_report(result, output_path, report_title)
             
             if success:
                 self.print_success(f"HTML report generated: {output_path}")
                 self.logger.info(f"Report generation successful: {output_path}")
+                
+                # Generate the JSON report (same path but with .json extension)
+                json_output_path = output_path.replace('.html', '.json')
+                try:
+                    with PerformanceTimer(self.logger, "JSON report generation", json_output_path):
+                        json_success = generate_json_report(result, json_output_path, report_title)
+                    
+                    if json_success:
+                        self.print_success(f"JSON report generated: {json_output_path}")
+                        self.logger.info(f"JSON report generation successful: {json_output_path}")
+                    else:
+                        self.logger.warning("JSON report generation failed")
+                        
+                except Exception as e:
+                    self.logger.warning(f"JSON report generation failed: {e}")
+                
                 return output_path
             else:
                 raise ReportGenerationError(output_path, "Report generation returned False")

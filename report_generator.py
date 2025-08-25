@@ -441,6 +441,10 @@ class HTMLReportGenerator:
         
         change_parts = []
         for field_name, change_info in field_changes.items():
+            # Skip internal technical fields
+            if field_name == 'original_mapping':
+                continue
+                
             old_val = change_info.get('old', '')
             new_val = change_info.get('new', '')
             
