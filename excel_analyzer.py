@@ -132,9 +132,26 @@ def identify_column_structure(worksheet: Worksheet, metadata: TabMetadata) -> Co
             normalized = normalize_column_name(header)
             if normalized:
                 if col_num in source_columns:
-                    column_mapping.source_columns[normalized] = col_num
+                    # For source columns, only keep first occurrence
+                    if normalized not in column_mapping.source_columns:
+                        column_mapping.source_columns[normalized] = col_num
                 elif col_num in target_columns:
-                    column_mapping.target_columns[normalized] = col_num
+                    # For target columns, prioritize certain column names for duplicates
+                    if normalized not in column_mapping.target_columns:
+                        column_mapping.target_columns[normalized] = col_num
+                    else:
+                        # Handle duplicate target columns - prioritize Comments over Description
+                        existing_col = column_mapping.target_columns[normalized]
+                        existing_header = headers[existing_col].lower()
+                        current_header = header.lower()
+                        
+                        # Prioritization rules for description fields
+                        if normalized == 'description':
+                            if 'comment' in current_header and 'comment' not in existing_header:
+                                # Current header contains "comment", prefer it
+                                column_mapping.target_columns[normalized] = col_num
+                                logger.debug(f"Prioritizing '{header}' over '{headers[existing_col]}' for description field")
+                        # Add more prioritization rules here if needed
         
         logger.debug(f"Tab '{metadata.tab_name}': Source cols={len(column_mapping.source_columns)}, "
                     f"Target cols={len(column_mapping.target_columns)}")
@@ -278,18 +295,27 @@ def _extract_single_mapping(worksheet: Worksheet, row_num: int,
             cell = worksheet.cell(row_num, target_field_col)
             mapping.target_field = _clean_cell_value(cell.value)
         
-        # Extract all other fields for comparison
+        # Extract all other fields for comparison using original column names
         all_fields = {}
         
-        # Source fields
+        # Get all headers for original names
+        all_headers = column_mapping.all_headers
+        
+        # Source fields - use original column names
         for field_type, col_num in column_mapping.source_columns.items():
             cell = worksheet.cell(row_num, col_num)
-            all_fields[f'source_{field_type}'] = _clean_cell_value(cell.value)
+            original_header = all_headers.get(col_num, f"Col_{col_num}")
+            # Normalize the original header for use as a key (remove spaces, special chars)
+            clean_key = f"source_{original_header.replace(' ', '_').replace('(', '').replace(')', '').lower()}"
+            all_fields[clean_key] = _clean_cell_value(cell.value)
         
-        # Target fields  
+        # Target fields - use original column names  
         for field_type, col_num in column_mapping.target_columns.items():
             cell = worksheet.cell(row_num, col_num)
-            all_fields[f'target_{field_type}'] = _clean_cell_value(cell.value)
+            original_header = all_headers.get(col_num, f"Col_{col_num}")
+            # Normalize the original header for use as a key (remove spaces, special chars)
+            clean_key = f"target_{original_header.replace(' ', '_').replace('(', '').replace(')', '').lower()}"
+            all_fields[clean_key] = _clean_cell_value(cell.value)
         
         mapping.all_fields = all_fields
         

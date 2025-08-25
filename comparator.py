@@ -221,13 +221,21 @@ def compare_tab_mappings(mappings1: List[MappingRecord], mappings2: List[Mapping
         if changes.field_changes:  # Only add if there are actual changes
             modified_mappings.append(changes)
     
-    logger.debug(f"Mapping comparison: +{len(added_mappings)} -{len(deleted_mappings)} ~{len(modified_mappings)}")
+    logger.debug(f"Basic mapping comparison: +{len(added_mappings)} -{len(deleted_mappings)} ~{len(modified_mappings)}")
     
-    return {
+    # Perform basic comparison first
+    basic_result = {
         "added": added_mappings,
         "deleted": deleted_mappings,
         "modified": modified_mappings
     }
+    
+    # Enhance with advanced partial mapping detection
+    enhanced_result = enhance_mapping_comparison(mappings1, mappings2, basic_result)
+    
+    logger.debug(f"Enhanced mapping comparison: +{len(enhanced_result['added'])} -{len(enhanced_result['deleted'])} ~{len(enhanced_result['modified'])}")
+    
+    return enhanced_result
 
 
 def compare_mapping_fields(mapping1: MappingRecord, mapping2: MappingRecord) -> MappingChange:
@@ -280,6 +288,98 @@ def compare_mapping_fields(mapping1: MappingRecord, mapping2: MappingRecord) -> 
             logger.debug(f"Field change detected: {field_name} '{value1}' -> '{value2}'")
     
     return change
+
+
+def enhance_mapping_comparison(mappings1: List[MappingRecord], mappings2: List[MappingRecord], 
+                              basic_result: Dict[str, List]) -> Dict[str, List]:
+    """
+    Enhance basic comparison with advanced matching for partial mappings.
+    
+    Looks for scenarios like:
+    - Source-only mappings that became complete
+    - Complete mappings that became target-only
+    - Field movements between source and target sides
+    
+    Args:
+        mappings1: Mappings from first version
+        mappings2: Mappings from second version
+        basic_result: Result from basic comparison
+        
+    Returns:
+        Enhanced comparison result with better change classification
+    """
+    DELIMITER = "||@@||"
+    
+    # Extract unmatched mappings for fuzzy matching
+    unmatched_added = basic_result["added"].copy()
+    unmatched_deleted = basic_result["deleted"].copy()
+    enhanced_added = []
+    enhanced_deleted = []
+    enhanced_modified = basic_result["modified"].copy()
+    
+    # Create lookup dictionaries for fuzzy matching
+    deleted_by_fields = {}
+    for mapping in unmatched_deleted:
+        # Create field-based keys for fuzzy matching
+        source_key = f"{mapping.source_canonical}|{mapping.source_field}" if mapping.source_canonical and mapping.source_field else None
+        target_key = f"{mapping.target_canonical}|{mapping.target_field}" if mapping.target_canonical and mapping.target_field else None
+        
+        if source_key:
+            deleted_by_fields[f"SOURCE:{source_key}"] = mapping
+        if target_key:
+            deleted_by_fields[f"TARGET:{target_key}"] = mapping
+    
+    # Check added mappings for potential matches with deleted ones
+    remaining_added = []
+    for mapping in unmatched_added:
+        matched = False
+        
+        # Try to find a corresponding deleted mapping
+        source_key = f"{mapping.source_canonical}|{mapping.source_field}" if mapping.source_canonical and mapping.source_field else None
+        target_key = f"{mapping.target_canonical}|{mapping.target_field}" if mapping.target_canonical and mapping.target_field else None
+        
+        # Look for completion scenarios (source-only became complete, etc.)
+        potential_matches = []
+        if source_key and f"SOURCE:{source_key}" in deleted_by_fields:
+            potential_matches.append(("SOURCE_COMPLETED", deleted_by_fields[f"SOURCE:{source_key}"]))
+        if target_key and f"TARGET:{target_key}" in deleted_by_fields:
+            potential_matches.append(("TARGET_COMPLETED", deleted_by_fields[f"TARGET:{target_key}"]))
+        
+        if potential_matches:
+            # Found a potential completion/transformation scenario
+            match_type, deleted_mapping = potential_matches[0]
+            
+            # Create a modified mapping change instead of separate add/delete
+            change = MappingChange(mapping=mapping, change_type="completed_mapping")
+            change.add_field_change("completion_type", match_type, "COMPLETED")
+            change.add_field_change("original_mapping", str(deleted_mapping.unique_id), str(mapping.unique_id))
+            
+            enhanced_modified.append(change)
+            unmatched_deleted.remove(deleted_mapping)
+            matched = True
+        
+        if not matched:
+            remaining_added.append(mapping)
+    
+    # Classify remaining unmatched mappings with enhanced types
+    for mapping in remaining_added:
+        # Classify by completeness
+        if mapping.unique_id.startswith("SOURCE_ONLY"):
+            enhanced_added.append(mapping)  # Keep as regular added for now
+        elif mapping.unique_id.startswith("TARGET_ONLY"):
+            enhanced_added.append(mapping)  # Keep as regular added for now
+        else:
+            enhanced_added.append(mapping)
+    
+    # Remaining deleted mappings
+    for mapping in unmatched_deleted:
+        enhanced_deleted.append(mapping)
+    
+    return {
+        "added": enhanced_added,
+        "deleted": enhanced_deleted,
+        "modified": enhanced_modified
+    }
 
 
 def compare_tab_metadata(metadata1, metadata2) -> Dict[str, Dict[str, str]]:

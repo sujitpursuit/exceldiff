@@ -28,16 +28,52 @@ class MappingRecord:
             self.unique_id = self.generate_unique_id()
     
     def generate_unique_id(self) -> str:
-        """Generate a unique identifier for this mapping."""
-        source_part = f"{self.source_canonical}|{self.source_field}".strip("|")
-        target_part = f"{self.target_canonical}|{self.target_field}".strip("|")
-        return f"{source_part}->{target_part}"
+        """Generate a unique identifier for this mapping using tiered approach."""
+        # Multi-character delimiter to avoid conflicts with actual data
+        DELIMITER = "||@@||"
+        
+        # Clean up field values (convert None to empty string)
+        source_canonical = self.source_canonical or ""
+        source_field = self.source_field or ""
+        target_canonical = self.target_canonical or ""
+        target_field = self.target_field or ""
+        
+        # Tier 1: Complete mapping (both source and target have canonical + field)
+        if all([source_canonical, source_field, target_canonical, target_field]):
+            return f"COMPLETE{DELIMITER}{source_canonical}{DELIMITER}{source_field}{DELIMITER}{target_canonical}{DELIMITER}{target_field}"
+        
+        # Tier 2: Source-only complete (source has both canonical + field, target incomplete)
+        elif source_canonical and source_field and not (target_canonical and target_field):
+            return f"SOURCE_ONLY{DELIMITER}{source_canonical}{DELIMITER}{source_field}{DELIMITER}BLANK{DELIMITER}BLANK"
+        
+        # Tier 3: Target-only complete (target has both canonical + field, source incomplete)
+        elif target_canonical and target_field and not (source_canonical and source_field):
+            return f"TARGET_ONLY{DELIMITER}BLANK{DELIMITER}BLANK{DELIMITER}{target_canonical}{DELIMITER}{target_field}"
+        
+        # Tier 4: Partial mappings (at least one side has some data)
+        else:
+            # Use row number as additional identifier for partial mappings to ensure uniqueness
+            row_identifier = getattr(self, 'row_number', 0)
+            return f"PARTIAL{DELIMITER}{source_canonical}{DELIMITER}{source_field}{DELIMITER}{target_canonical}{DELIMITER}{target_field}{DELIMITER}ROW_{row_identifier}"
     
     def is_valid(self) -> bool:
-        """Check if the mapping has minimum required data."""
+        """
+        Check if the mapping has minimum required data.
+        Now supports partial mappings where only one side (Source OR Target) 
+        has complete canonical + field information.
+        """
+        # Complete source side (both canonical and field)
+        source_complete = bool(self.source_canonical and self.source_field)
+        
+        # Complete target side (both canonical and field)
+        target_complete = bool(self.target_canonical and self.target_field)
+        
+        # Valid if at least one side is complete OR both sides have some data
         return bool(
-            (self.source_canonical or self.source_field) and
-            (self.target_canonical or self.target_field)
+            source_complete or 
+            target_complete or 
+            ((self.source_canonical or self.source_field) and 
+             (self.target_canonical or self.target_field))
         )
 
 
@@ -100,7 +136,7 @@ class MappingChange:
     """Represents a change to a mapping between versions."""
     
     mapping: MappingRecord
-    change_type: str  # 'added', 'deleted', 'modified'
+    change_type: str  # 'added', 'deleted', 'modified', 'added_source_only', 'added_target_only', 'completed_mapping', 'split_mapping', 'moved_mapping'
     field_changes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     
     def add_field_change(self, field_name: str, old_value: Any, new_value: Any):
