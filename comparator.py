@@ -142,6 +142,14 @@ def compare_single_tab(tab1: Optional[TabAnalysis], tab2: Optional[TabAnalysis],
     comparison = TabComparison()
     comparison.tab_name = tab_name
     
+    # Extract system information from metadata (prioritize tab2, fallback to tab1)
+    if tab2 is not None:
+        comparison.source_system = tab2.metadata.source_system
+        comparison.target_system = tab2.metadata.target_system
+    elif tab1 is not None:
+        comparison.source_system = tab1.metadata.source_system
+        comparison.target_system = tab1.metadata.target_system
+    
     # Determine tab status
     if tab1 is None and tab2 is not None:
         # Tab was added

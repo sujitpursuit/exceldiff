@@ -232,6 +232,8 @@ class HTMLReportGenerator:
                 </div>
                 <div class="content">
                     <div class="tab-details">
+                        <p><strong>Source System:</strong> {tab_comparison.source_system or 'Not specified'}</p>
+                        <p><strong>Target System:</strong> {tab_comparison.target_system or 'Not specified'}</p>
                         <p><strong>Change Summary:</strong> {self._get_change_summary_text(tab_comparison)}</p>
                         
                         {self._build_mapping_tables(tab_comparison)}

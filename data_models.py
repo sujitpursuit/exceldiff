@@ -157,6 +157,8 @@ class TabComparison:
     deleted_mappings: List[MappingRecord] = field(default_factory=list)
     modified_mappings: List[MappingChange] = field(default_factory=list)
     metadata_changes: Dict[str, Any] = field(default_factory=dict)
+    source_system: Optional[str] = None
+    target_system: Optional[str] = None
     
     @property
     def has_changes(self) -> bool:

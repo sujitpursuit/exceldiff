@@ -228,8 +228,11 @@ class JSONReportGenerator:
                          if not comp.has_changes]
         
         for tab_name in unchanged_tabs:
+            tab_comparison = result.tab_comparisons[tab_name]
             detailed_changes["unchanged_tabs"].append({
                 "tab_name": tab_name,
+                "source_system": tab_comparison.source_system,
+                "target_system": tab_comparison.target_system,
                 "status": "unchanged"
             })
         
@@ -242,6 +245,8 @@ class JSONReportGenerator:
         
         tab_data = {
             "tab_name": tab_name,
+            "source_system": tab_comparison.source_system,
+            "target_system": tab_comparison.target_system,
             "change_type": self._determine_change_type(tab_comparison),
             "change_badge": badge_info,
             "change_summary": {
