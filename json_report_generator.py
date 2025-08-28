@@ -243,6 +243,17 @@ class JSONReportGenerator:
         # Get change badge info
         badge_info = self._get_change_badge_info(tab_comparison)
         
+        # Build version metadata if available
+        version_metadata = {}
+        if hasattr(tab_comparison, 'physical_name_v1') and tab_comparison.physical_name_v1:
+            version_metadata = {
+                "logical_name": getattr(tab_comparison, 'logical_name', tab_name),
+                "physical_name_v1": tab_comparison.physical_name_v1,
+                "physical_name_v2": tab_comparison.physical_name_v2,
+                "version_v1": getattr(tab_comparison, 'version_v1', 0),
+                "version_v2": getattr(tab_comparison, 'version_v2', 0)
+            }
+        
         tab_data = {
             "tab_name": tab_name,
             "source_system": tab_comparison.source_system,
@@ -261,6 +272,10 @@ class JSONReportGenerator:
                 "modified_mappings": self._build_modified_mappings_data(tab_comparison.modified_mappings)
             }
         }
+        
+        # Add version metadata if available
+        if version_metadata:
+            tab_data["version_metadata"] = version_metadata
         
         return tab_data
     
@@ -343,7 +358,7 @@ class JSONReportGenerator:
             
             mapping_data = {
                 "status": "Added",
-                "row_number": i + 1,  # This could be enhanced with actual row tracking
+                "row_number": mapping.row_number,  # Actual Excel row number
                 "mapping_fields": key_fields,
                 "other_fields": other_fields
             }
@@ -363,7 +378,7 @@ class JSONReportGenerator:
             
             mapping_data = {
                 "status": "Deleted",
-                "original_row_number": i + 1,  # This could be enhanced with actual row tracking
+                "original_row_number": mapping.row_number,  # Actual Excel row number
                 "mapping_fields": key_fields,
                 "other_fields": other_fields
             }
@@ -397,7 +412,7 @@ class JSONReportGenerator:
             
             mapping_data = {
                 "status": "Modified",
-                "row_number": i + 1,  # This could be enhanced with actual row tracking
+                "row_number": mapping_change.mapping.row_number,  # Actual Excel row number
                 "mapping_fields": key_fields,
                 "field_changes": field_changes
             }

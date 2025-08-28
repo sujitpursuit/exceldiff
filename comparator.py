@@ -6,7 +6,7 @@ between two Excel workbooks containing Source-Target mapping data.
 """
 
 import logging
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Any
 from datetime import datetime
 
 from data_models import (
@@ -19,6 +19,7 @@ from exceptions import (
     FileValidationError, ProcessingError
 )
 from logger import get_logger, PerformanceTimer, log_exception
+import config
 
 logger = get_logger(__name__)
 
@@ -99,48 +100,233 @@ def compare_workbooks(file1_path: str, file2_path: str) -> ComparisonResult:
     return comparison_result
 
 
+def resolve_tab_versions(tabs1: Dict[str, TabAnalysis], tabs2: Dict[str, TabAnalysis]) -> Dict[str, Dict[str, Any]]:
+    """
+    Resolve tab versions to identify active tabs for comparison.
+    
+    Handles cases where tabs have version suffixes like " (2)", " (3)" etc.
+    The highest numbered version (or base if no numbered versions) is considered active.
+    
+    Args:
+        tabs1: Dictionary of tab analyses from first workbook  
+        tabs2: Dictionary of tab analyses from second workbook
+        
+    Returns:
+        Dictionary mapping logical_name to {
+            'logical_name': str,
+            'tab1': TabAnalysis or None,
+            'tab2': TabAnalysis or None,
+            'physical_name_v1': str or None,
+            'physical_name_v2': str or None,
+            'version_v1': int,
+            'version_v2': int
+        }
+    """
+    import re
+    
+    def extract_base_name_and_version(tab_name: str) -> tuple[str, int, bool]:
+        """Extract base name, version, and truncation flag from tab name.
+        
+        Returns:
+            tuple[str, int, bool]: (base_name, version, is_truncated)
+            
+        Examples:
+            'TabName (2)' -> ('TabName', 2, False)
+            'VendorInboundVendorProxytoD (2)' -> ('VendorInboundVendorProxytoD', 2, True) # if 31 chars
+        """
+        # Pattern to match " (number)" at the end of the string
+        pattern = r'^(.+?)\s*\((\d+)\)$'
+        match = re.match(pattern, tab_name.strip())
+        
+        if match:
+            base_name = match.group(1).strip()
+            version = int(match.group(2))
+            
+            # Check if this might be a truncated name
+            is_truncated = (
+                config.ENABLE_TRUNCATED_TAB_MATCHING and 
+                len(tab_name.strip()) == config.EXCEL_TAB_NAME_MAX_LENGTH
+            )
+            
+            return base_name, version, is_truncated
+        else:
+            # No version suffix, this is the base version (version 0)
+            return tab_name.strip(), 0, False
+    
+    def find_truncated_match(truncated_base: str, tab_dict: Dict[str, TabAnalysis]) -> Optional[str]:
+        """Find the original tab name that matches a truncated base name.
+        
+        Args:
+            truncated_base: The truncated base name (e.g., "VendorInboundVendorProxytoD")
+            tab_dict: Dictionary of tab names to analyze
+            
+        Returns:
+            The full original tab name if found, None otherwise
+        """
+        candidates = []
+        
+        for physical_name in tab_dict.keys():
+            # Check if this tab starts with the truncated base and is longer
+            if (physical_name.startswith(truncated_base) and 
+                len(physical_name) > len(truncated_base)):
+                
+                # Additional validation: ensure it's not a coincidental match
+                # The original should be exactly the truncated part + additional characters
+                remainder = physical_name[len(truncated_base):]
+                if remainder.isalnum() or remainder.replace('_', '').replace('-', '').isalnum():
+                    candidates.append(physical_name)
+        
+        # If we have exactly one candidate, it's likely the original
+        if len(candidates) == 1:
+            logger.debug(f"Found truncated match: '{truncated_base}' -> '{candidates[0]}'")
+            return candidates[0]
+        elif len(candidates) > 1:
+            # Multiple candidates - choose the shortest one (most likely original)
+            best_match = min(candidates, key=len)
+            logger.warning(f"Multiple truncated matches for '{truncated_base}': {candidates}. Using: '{best_match}'")
+            return best_match
+        
+        return None
+    
+    def get_active_tab(tab_dict: Dict[str, TabAnalysis], base_name: str) -> tuple[TabAnalysis, str, int]:
+        """Get the active (highest version) tab for a base name"""
+        candidates = []
+        
+        for physical_name, analysis in tab_dict.items():
+            extracted_base, version, is_truncated = extract_base_name_and_version(physical_name)
+            
+            # Handle exact matches
+            if extracted_base == base_name:
+                candidates.append((analysis, physical_name, version))
+            # Handle truncated matches using the mapping
+            elif is_truncated and config.ENABLE_TRUNCATED_TAB_MATCHING:
+                if truncated_to_original.get(extracted_base) == base_name:
+                    candidates.append((analysis, physical_name, version))
+        
+        if not candidates:
+            return None, None, 0
+        
+        # Return the tab with the highest version number
+        return max(candidates, key=lambda x: x[2])
+    
+    # Combine all tab names from both workbooks for cross-file matching
+    all_tabs_combined = {}
+    all_tabs_combined.update(tabs1)
+    all_tabs_combined.update(tabs2)
+    
+    # Get all unique base names from both workbooks
+    all_base_names = set()
+    truncated_bases = set()
+    
+    for tab_name in tabs1.keys():
+        base_name, _, is_truncated = extract_base_name_and_version(tab_name)
+        all_base_names.add(base_name)
+        if is_truncated:
+            truncated_bases.add(base_name)
+    
+    for tab_name in tabs2.keys():
+        base_name, _, is_truncated = extract_base_name_and_version(tab_name)
+        all_base_names.add(base_name)
+        if is_truncated:
+            truncated_bases.add(base_name)
+    
+    # For each truncated base, try to find the original across both files
+    # If found, remove the truncated base and use only the original
+    truncated_to_original = {}
+    for truncated_base in truncated_bases.copy():
+        if config.ENABLE_TRUNCATED_TAB_MATCHING:
+            original_match = find_truncated_match(truncated_base, all_tabs_combined)
+            if original_match:
+                truncated_to_original[truncated_base] = original_match
+                all_base_names.add(original_match)
+                all_base_names.discard(truncated_base)  # Remove truncated base from logical names
+                logger.debug(f"Cross-file truncated match found: '{truncated_base}' -> '{original_match}'")
+    
+    # Resolve active tabs for each base name
+    resolved_tabs = {}
+    
+    for base_name in all_base_names:
+        tab1, physical1, version1 = get_active_tab(tabs1, base_name)
+        tab2, physical2, version2 = get_active_tab(tabs2, base_name)
+        
+        resolved_tabs[base_name] = {
+            'logical_name': base_name,
+            'tab1': tab1,
+            'tab2': tab2,
+            'physical_name_v1': physical1,
+            'physical_name_v2': physical2,
+            'version_v1': version1,
+            'version_v2': version2
+        }
+    
+    logger.info(f"Resolved {len(resolved_tabs)} logical tabs from {len(tabs1)} + {len(tabs2)} physical tabs")
+    
+    # Debug: Log all resolved tab mappings
+    for logical_name, resolution in resolved_tabs.items():
+        logger.debug(f"  Logical tab '{logical_name}': v1='{resolution['physical_name_v1']}' v2='{resolution['physical_name_v2']}'")
+    
+    return resolved_tabs
+
+
 def compare_all_tabs(tabs1: Dict[str, TabAnalysis], tabs2: Dict[str, TabAnalysis]) -> Dict[str, TabComparison]:
     """
-    Compare all tabs between two workbook analyses.
+    Compare all tabs between two workbook analyses with version resolution.
     
     Args:
         tabs1: Dictionary of tab analyses from first workbook
         tabs2: Dictionary of tab analyses from second workbook
         
     Returns:
-        Dictionary mapping tab names to TabComparison objects
+        Dictionary mapping logical tab names to TabComparison objects
     """
     tab_comparisons = {}
     
-    # Get all unique tab names from both workbooks
-    all_tab_names = set(tabs1.keys()) | set(tabs2.keys())
+    # Resolve tab versions to get active tabs
+    resolved_tabs = resolve_tab_versions(tabs1, tabs2)
     
-    for tab_name in all_tab_names:
+    for logical_name, resolution in resolved_tabs.items():
         tab_comparison = compare_single_tab(
-            tabs1.get(tab_name), 
-            tabs2.get(tab_name), 
-            tab_name
+            resolution['tab1'],
+            resolution['tab2'], 
+            logical_name,
+            resolution
         )
-        tab_comparisons[tab_name] = tab_comparison
+        tab_comparisons[logical_name] = tab_comparison
     
     return tab_comparisons
 
 
 def compare_single_tab(tab1: Optional[TabAnalysis], tab2: Optional[TabAnalysis], 
-                      tab_name: str) -> TabComparison:
+                      tab_name: str, resolution: Optional[Dict[str, Any]] = None) -> TabComparison:
     """
     Compare a single tab between two workbook versions.
     
     Args:
         tab1: Tab analysis from first workbook (None if tab doesn't exist)
         tab2: Tab analysis from second workbook (None if tab doesn't exist)
-        tab_name: Name of the tab being compared
+        tab_name: Name of the tab being compared (logical name)
+        resolution: Version resolution info containing physical names and versions
         
     Returns:
         TabComparison object with all differences
     """
     comparison = TabComparison()
     comparison.tab_name = tab_name
+    
+    # Set version tracking metadata if resolution info provided
+    if resolution:
+        comparison.logical_name = resolution['logical_name']
+        comparison.physical_name_v1 = resolution['physical_name_v1']
+        comparison.physical_name_v2 = resolution['physical_name_v2']
+        comparison.version_v1 = resolution['version_v1']
+        comparison.version_v2 = resolution['version_v2']
+    else:
+        # Legacy mode - use tab_name as both logical and physical
+        comparison.logical_name = tab_name
+        comparison.physical_name_v1 = tab_name if tab1 else None
+        comparison.physical_name_v2 = tab_name if tab2 else None
+        comparison.version_v1 = 0
+        comparison.version_v2 = 0
     
     # Extract system information from metadata (prioritize tab2, fallback to tab1)
     if tab2 is not None:

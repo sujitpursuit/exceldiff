@@ -98,6 +98,10 @@ IGNORE_EMPTY_CELLS = True          # Whether empty cells should be ignored in co
 SKIP_HIDDEN_TABS = True            # Whether to skip hidden worksheets
 PROCESS_HIDDEN_TABS = False        # Set to True to process hidden tabs (overrides SKIP_HIDDEN_TABS)
 
+# Tab name versioning settings
+EXCEL_TAB_NAME_MAX_LENGTH = 31     # Maximum length for Excel tab names (as per Excel documentation)
+ENABLE_TRUNCATED_TAB_MATCHING = True  # Whether to enable fuzzy matching for truncated tab names
+
 # System name detection rules
 SYSTEM_NAME_MAX_SEARCH_COLUMNS = 20  # How many columns to search for target system name
 SYSTEM_NAME_MIN_LENGTH = 2           # Minimum length for a valid system name

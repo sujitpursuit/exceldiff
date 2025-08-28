@@ -160,6 +160,13 @@ class TabComparison:
     source_system: Optional[str] = None
     target_system: Optional[str] = None
     
+    # Version tracking metadata
+    logical_name: str = ""  # The business/functional tab name
+    physical_name_v1: Optional[str] = None  # Actual tab name in file1
+    physical_name_v2: Optional[str] = None  # Actual tab name in file2
+    version_v1: int = 0  # Version number in file1 (0 = base)
+    version_v2: int = 0  # Version number in file2 (0 = base)
+    
     @property
     def has_changes(self) -> bool:
         """Check if this tab has any changes."""

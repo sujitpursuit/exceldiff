@@ -217,10 +217,48 @@ class HTMLReportGenerator:
         changes_html += "\n        </div>"
         return changes_html
     
+    def _build_version_info(self, tab_comparison: TabComparison) -> str:
+        """Build version information display for tab comparison."""
+        if not hasattr(tab_comparison, 'physical_name_v1') or not tab_comparison.physical_name_v1:
+            return ""
+        
+        # Check if there are actual version differences to display
+        v1_physical = tab_comparison.physical_name_v1 or ""
+        v2_physical = tab_comparison.physical_name_v2 or ""
+        v1_version = getattr(tab_comparison, 'version_v1', 0)
+        v2_version = getattr(tab_comparison, 'version_v2', 0)
+        
+        # Only show version info if there are versioned tabs (not just base names)
+        if v1_version == 0 and v2_version == 0 and v1_physical == v2_physical:
+            return ""
+        
+        version_display_parts = []
+        
+        if v1_physical:
+            if v1_version == 0:
+                version_display_parts.append(f"v1: {v1_physical}")
+            else:
+                version_display_parts.append(f"v1: {v1_physical} (v{v1_version})")
+        
+        if v2_physical:
+            if v2_version == 0:
+                version_display_parts.append(f"v2: {v2_physical}")
+            else:
+                version_display_parts.append(f"v2: {v2_physical} (v{v2_version})")
+        
+        if version_display_parts:
+            version_text = " → ".join(version_display_parts)
+            return f'<div class="version-info" title="Physical tab names in each file">{version_text}</div>'
+        
+        return ""
+    
     def _build_tab_change_section(self, tab_name: str, tab_comparison: TabComparison) -> str:
         """Build a section for a single changed tab."""
         # Determine badge style and content
         badge_info = self._get_change_badge_info(tab_comparison)
+        
+        # Build version info display
+        version_info = self._build_version_info(tab_comparison)
         
         # Build the tab section
         tab_html = f"""
@@ -228,6 +266,7 @@ class HTMLReportGenerator:
             <div class="tab-change">
                 <div class="tab-header collapsible" onclick="toggleContent(this)">
                     <div class="tab-name">📋 {tab_name}</div>
+                    {version_info}
                     <div class="change-badge {badge_info['class']}">{badge_info['text']}</div>
                 </div>
                 <div class="content">
@@ -685,6 +724,14 @@ class HTMLReportGenerator:
         .tab-name {
             font-weight: 600;
             font-size: 1.1em;
+        }
+        
+        .version-info {
+            font-size: 0.8em;
+            color: #666;
+            font-style: italic;
+            margin-top: 2px;
+            opacity: 0.8;
         }
         
         .change-badge {
