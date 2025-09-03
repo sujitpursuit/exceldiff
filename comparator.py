@@ -71,7 +71,7 @@ def compare_workbooks(file1_path: str, file2_path: str) -> ComparisonResult:
         # Compare tabs
         comparison_result.tab_comparisons = compare_all_tabs(valid_tabs1, valid_tabs2)
         
-        # Generate summary
+        # Generate summary using resolved tabs (logical counts, not physical)
         comparison_result.summary = generate_comparison_summary(
             valid_tabs1, valid_tabs2, comparison_result.tab_comparisons
         )
@@ -543,12 +543,14 @@ def enhance_mapping_comparison(mappings1: List[MappingRecord], mappings2: List[M
             # Found a potential completion/transformation scenario
             match_type, deleted_mapping = potential_matches[0]
             
-            # Create a modified mapping change instead of separate add/delete
-            change = MappingChange(mapping=mapping, change_type="completed_mapping")
-            change.add_field_change("completion_type", match_type, "COMPLETED")
-            change.add_field_change("original_mapping", str(deleted_mapping.unique_id), str(mapping.unique_id))
+            # Use actual field comparison to show real changes to users
+            change = compare_mapping_fields(deleted_mapping, mapping)
+            change.change_type = "modified"  # Override the completion type with standard modified
             
-            enhanced_modified.append(change)
+            # Only add if there are actual field changes (not just internal matching)
+            if change.field_changes:
+                enhanced_modified.append(change)
+            
             unmatched_deleted.remove(deleted_mapping)
             matched = True
         
@@ -631,9 +633,23 @@ def generate_comparison_summary(tabs1: Dict[str, TabAnalysis], tabs2: Dict[str, 
         elif comparison.status == "unchanged":
             summary.tabs_unchanged += 1
     
-    # Mapping counts
-    summary.total_mappings_v1 = sum(len(tab.mappings) for tab in tabs1.values())
-    summary.total_mappings_v2 = sum(len(tab.mappings) for tab in tabs2.values())
+    # Mapping counts - count from logical tabs to avoid duplicates from versioned tabs
+    # Use tab_comparisons which represents resolved logical tabs, not raw physical tabs
+    summary.total_mappings_v1 = 0
+    summary.total_mappings_v2 = 0
+    
+    # Get the resolved tab information to calculate accurate totals
+    resolved_tabs = resolve_tab_versions(tabs1, tabs2)
+    
+    for logical_name, resolution in resolved_tabs.items():
+        tab1 = resolution.get('tab1')
+        tab2 = resolution.get('tab2')
+        
+        # Count mappings from the active/resolved tabs only
+        if tab1:
+            summary.total_mappings_v1 += len(tab1.mappings)
+        if tab2:
+            summary.total_mappings_v2 += len(tab2.mappings)
     
     # Mapping change counts
     for comparison in tab_comparisons.values():
