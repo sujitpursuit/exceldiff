@@ -1,0 +1,35 @@
+TAB: NetSuiteVendorReqRespAssociate
+ADDED line3
+DealerAssociateInfo		LineThree
+
+MODIFED
+NetSuiteVendorWorkItem	EntityId  ->SpinID
+
+
+TAB: Vendor Inbound DACH VenProxy
+DELETED
+Party-Dealer Associate	MiddleName 
+
+MODIFIED - test data from test ->REIMBURSEMENT
+Incentives-FinancialRequest	ReasonCode	test
+
+TAB: Vendor Inbound: Copy tab
+ADDED
+Financial Request	CompanyCode
+
+COMMAND TO COMPARE
+python main.py STTM_original.xlsx STTM_revised2.xlsx
+
+
+TAB: VendorInbound-DealerAssociate
+change source field length from 6 to 30
+
+
+Copy json
+
+COMMAND FOR 
+python main.py --analyze-impact STTMDIFF-V4.json QTEST_STTM.xlsx
+
+python main.py --generate-test-steps STTMDIFF-V4.json QTEST_STTM.xlsx
+
+python main.py --generate-test-steps STTMDIFF-V4.json QTEST_STTM.xlsx --modify-in-place

@@ -8,7 +8,16 @@
       "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
       "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
       "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
-      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)"
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive\\Pictures\\aiss/**)",
+      "Bash(grep:*)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(/C:\\Users\\sujit\\OneDrive - pursuit software development pvt. ltd\\CODE\\EXCELDIFF_WEB/**)",
+      "Read(//c/Users/sujit/OneDrive/Pictures/aiss/**)"
     ],
     "deny": [],
     "ask": []
