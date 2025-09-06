@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Version Comparison Tool</title>
+    
+    <!-- Alpine.js CDN -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+        /* Custom styles for checkboxes */
+        .checkbox-custom {
+            appearance: none;
+            width: 1.2rem;
+            height: 1.2rem;
+            border: 2px solid #3b82f6;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .checkbox-custom:checked {
+            background: #3b82f6;
+        }
+        
+        .checkbox-custom:checked::after {
+            content: '✓';
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            top: -2px;
+            left: 2px;
+        }
+        
+        .version-card {
+            transition: all 0.2s ease;
+        }
+        
+        .version-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        
+        .version-card.selected {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">Excel Version Comparison Tool</h1>
+            <p class="text-gray-600">Compare different versions of your Excel files tracked in SharePoint</p>
+        </div>
+
+        <!-- Main App -->
+        <div x-data="excelComparator()" class="space-y-6">
+            
+            <!-- Search Section -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Find File Versions</h2>
+                
+                <div class="flex gap-4 mb-4">
+                    <div class="flex-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            File Name or SharePoint URL
+                        </label>
+                        <input 
+                            type="text" 
+                            x-model="searchTerm"
+                            @keyup.enter="searchVersions"
+                            placeholder="Enter friendly name (e.g., 'STTM') or SharePoint URL"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                    </div>
+                    <div class="w-32">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">
+                            Search Type
+                        </label>
+                        <select 
+                            x-model="searchType"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="name">Name</option>
+                            <option value="url">URL</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <button 
+                    @click="searchVersions"
+                    :disabled="loading || !searchTerm.trim()"
+                    class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                    <span x-show="!loading">Search Versions</span>
+                    <span x-show="loading">Searching...</span>
+                </button>
+            </div>
+
+            <!-- Error Message -->
+            <div x-show="error" class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+                <strong class="font-bold">Error:</strong>
+                <span x-text="error"></span>
+            </div>
+            
+            <!-- Success Message -->
+            <div x-show="successMessage" class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
+                <strong class="font-bold">Success:</strong>
+                <span x-text="successMessage"></span>
+            </div>
+
+            <!-- File Info -->
+            <div x-show="fileInfo" class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">File Information</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <span class="font-medium text-gray-600">Friendly Name:</span>
+                        <span x-text="fileInfo?.friendly_name || 'N/A'" class="ml-2 text-gray-800"></span>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-600">File Name:</span>
+                        <span x-text="fileInfo?.file_name || 'N/A'" class="ml-2 text-gray-800"></span>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-600">Total Versions:</span>
+                        <span x-text="fileInfo?.total_versions || 0" class="ml-2 text-gray-800"></span>
+                    </div>
+                    <div>
+                        <span class="font-medium text-gray-600">Available for Comparison:</span>
+                        <span x-text="summary?.available_versions || 0" class="ml-2 text-green-600 font-medium"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Versions List -->
+            <div x-show="versions.length > 0" class="bg-white rounded-lg shadow-md p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">Select Versions to Compare</h2>
+                    <div class="text-sm text-gray-600">
+                        <span x-text="selectedVersions.length"></span>/2 selected
+                    </div>
+                </div>
+                
+                <div class="grid gap-4 mb-6">
+                    <template x-for="version in versions" :key="version.version_id">
+                        <div 
+                            class="version-card border rounded-lg p-4"
+                            :class="{
+                                'selected': isVersionSelected(version.version_id), 
+                                'border-gray-200': !isVersionSelected(version.version_id),
+                                'cursor-pointer hover:shadow-md': version.is_available,
+                                'cursor-not-allowed opacity-60': !version.is_available
+                            }"
+                            @click="toggleVersion(version)"
+                        >
+                            <div class="flex items-start gap-4">
+                                <input 
+                                    type="checkbox" 
+                                    class="checkbox-custom mt-1"
+                                    :checked="isVersionSelected(version.version_id)"
+                                    @click.stop="toggleVersion(version)"
+                                    :disabled="!version.is_available"
+                                >
+                                
+                                <div class="flex-1">
+                                    <div class="flex items-center gap-2 mb-2">
+                                        <h3 class="font-semibold text-gray-800">
+                                            Version <span x-text="version.sequence_number"></span>
+                                            <span x-show="version.is_latest" class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full ml-2">Latest</span>
+                                        </h3>
+                                        <span 
+                                            class="text-xs px-2 py-1 rounded-full"
+                                            :class="version.is_available ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'"
+                                            x-text="version.is_available ? 'Available' : 'Not Downloaded'"
+                                        ></span>
+                                    </div>
+                                    
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-600">
+                                        <div>
+                                            <span class="font-medium">Version ID:</span>
+                                            <span x-text="version.sharepoint_version_id" class="ml-1"></span>
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Modified:</span>
+                                            <span x-text="formatDate(version.modified_datetime)" class="ml-1"></span>
+                                        </div>
+                                        <div>
+                                            <span class="font-medium">Size:</span>
+                                            <span x-text="formatFileSize(version.file_size_bytes)" class="ml-1"></span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div x-show="version.download_filename" class="text-xs text-gray-500 mt-2">
+                                        File: <span x-text="version.download_filename"></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+                
+                <!-- Compare Button -->
+                <div class="text-center">
+                    <button 
+                        @click="compareVersions"
+                        :disabled="selectedVersions.length !== 2 || comparing"
+                        class="bg-green-600 text-white px-8 py-3 rounded-md font-medium hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                    >
+                        <span x-show="!comparing">Compare Selected Versions</span>
+                        <span x-show="comparing">Comparing...</span>
+                    </button>
+                    <p class="text-sm text-gray-500 mt-2">
+                        Select exactly 2 available versions to compare
+                    </p>
+                </div>
+            </div>
+
+            <!-- Comparison Results -->
+            <div x-show="comparisonResult" class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Comparison Results</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    <div class="text-center p-4 bg-blue-50 rounded-lg">
+                        <div class="text-2xl font-bold text-blue-600" x-text="comparisonResult?.comparison_summary?.total_changes || 0"></div>
+                        <div class="text-sm text-gray-600">Total Changes</div>
+                    </div>
+                    <div class="text-center p-4 bg-green-50 rounded-lg">
+                        <div class="text-2xl font-bold text-green-600" x-text="comparisonResult?.comparison_summary?.mappings?.added || 0"></div>
+                        <div class="text-sm text-gray-600">Added Mappings</div>
+                    </div>
+                    <div class="text-center p-4 bg-orange-50 rounded-lg">
+                        <div class="text-2xl font-bold text-orange-600" x-text="comparisonResult?.comparison_summary?.mappings?.modified || 0"></div>
+                        <div class="text-sm text-gray-600">Modified Mappings</div>
+                    </div>
+                </div>
+                
+                <div class="flex gap-4 justify-center">
+                    <a 
+                        x-show="comparisonResult?.reports?.html_report"
+                        :href="comparisonResult?.reports?.html_report"
+                        target="_blank"
+                        class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
+                    >
+                        View HTML Report
+                    </a>
+                    <a 
+                        x-show="comparisonResult?.reports?.json_report"
+                        :href="comparisonResult?.reports?.json_report"
+                        target="_blank"
+                        class="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700"
+                    >
+                        Download JSON Report
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function excelComparator() {
+            return {
+                // State
+                searchTerm: 'STTM',  // Pre-filled for testing
+                searchType: 'name',
+                loading: false,
+                comparing: false,
+                error: null,
+                successMessage: null,
+                
+                // Data
+                fileInfo: null,
+                versions: [],
+                summary: null,
+                selectedVersions: [],
+                comparisonResult: null,
+                
+                // Methods
+                async searchVersions() {
+                    if (!this.searchTerm.trim()) return;
+                    
+                    this.loading = true;
+                    this.error = null;
+                    this.successMessage = null;  // Clear any previous success messages
+                    this.fileInfo = null;
+                    this.versions = [];
+                    this.selectedVersions = [];
+                    this.comparisonResult = null;
+                    
+                    try {
+                        const params = new URLSearchParams({
+                            identifier: this.searchTerm,
+                            search_type: this.searchType
+                        });
+                        
+                        const response = await fetch(`/api/files/versions?${params}`);
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            this.fileInfo = data.file_info;
+                            this.versions = data.versions;
+                            this.summary = data.summary;
+                        } else {
+                            this.error = data.detail || 'Failed to fetch versions';
+                        }
+                    } catch (err) {
+                        this.error = 'Network error: ' + err.message;
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+                
+                toggleVersion(version) {
+                    // Don't allow selection of unavailable versions
+                    if (!version.is_available) {
+                        this.error = `Version ${version.sequence_number} is not available for comparison. The file has not been downloaded.`;
+                        // Clear error after 3 seconds
+                        setTimeout(() => { this.error = null; }, 3000);
+                        return;
+                    }
+                    
+                    const index = this.selectedVersions.findIndex(v => v.version_id === version.version_id);
+                    
+                    if (index >= 0) {
+                        // Remove if already selected
+                        this.selectedVersions.splice(index, 1);
+                    } else {
+                        // Add if not selected and less than 2 selected
+                        if (this.selectedVersions.length < 2) {
+                            this.selectedVersions.push(version);
+                        } else {
+                            // Show message if trying to select more than 2
+                            this.error = 'Please deselect one version first. You can only compare 2 versions at a time.';
+                            // Clear error after 3 seconds
+                            setTimeout(() => { this.error = null; }, 3000);
+                        }
+                    }
+                },
+                
+                isVersionSelected(versionId) {
+                    return this.selectedVersions.some(v => v.version_id === versionId);
+                },
+                
+                async compareVersions() {
+                    // Ensure exactly 2 versions are selected
+                    if (this.selectedVersions.length !== 2) return;
+                    
+                    // Set loading state
+                    this.comparing = true;
+                    this.error = null;
+                    this.successMessage = null;  // Clear any previous messages
+                    this.comparisonResult = null;
+                    
+                    try {
+                        // Extract file paths from selected versions
+                        // These paths come from the download_filename field in the database
+                        const file1Path = this.selectedVersions[0].download_filename;
+                        const file2Path = this.selectedVersions[1].download_filename;
+                        
+                        // Validate that both versions have download paths
+                        if (!file1Path) {
+                            this.error = `Version ${this.selectedVersions[0].sequence_number} has not been downloaded yet`;
+                            return;
+                        }
+                        
+                        if (!file2Path) {
+                            this.error = `Version ${this.selectedVersions[1].sequence_number} has not been downloaded yet`;
+                            return;
+                        }
+                        
+                        // Prepare form data with file paths instead of version IDs
+                        const formData = new FormData();
+                        formData.append('file1_path', file1Path);  // Path to first Excel file
+                        formData.append('file2_path', file2Path);  // Path to second Excel file
+                        
+                        // Create descriptive title showing which versions are being compared
+                        const title = `Version ${this.selectedVersions[0].sequence_number} vs Version ${this.selectedVersions[1].sequence_number}`;
+                        formData.append('title', title);
+                        
+                        // Call the updated endpoint that accepts file paths
+                        const response = await fetch('/api/compare-versions', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        // Parse response
+                        const data = await response.json();
+                        
+                        if (response.ok) {
+                            // Success - store comparison result for display
+                            this.comparisonResult = data;
+                            
+                            // Show success message
+                            this.successMessage = `Comparison completed! Found ${data.comparison_summary.total_changes} total changes.`;
+                            // Clear success message after 5 seconds
+                            setTimeout(() => { this.successMessage = null; }, 5000);
+                        } else {
+                            // API returned an error - display user-friendly message
+                            this.error = data.detail || 'Comparison failed';
+                        }
+                    } catch (err) {
+                        // Network or other error
+                        this.error = 'Network error: ' + err.message;
+                    } finally {
+                        // Always reset loading state
+                        this.comparing = false;
+                    }
+                },
+                
+                // Utility functions
+                formatDate(dateString) {
+                    if (!dateString) return 'N/A';
+                    return new Date(dateString).toLocaleString();
+                },
+                
+                formatFileSize(bytes) {
+                    if (!bytes) return 'N/A';
+                    const units = ['B', 'KB', 'MB', 'GB'];
+                    let size = bytes;
+                    let unitIndex = 0;
+                    
+                    while (size >= 1024 && unitIndex < units.length - 1) {
+                        size /= 1024;
+                        unitIndex++;
+                    }
+                    
+                    return `${size.toFixed(1)} ${units[unitIndex]}`;
+                }
+            }
+        }
+        
+        // Auto-search on page load for demo
+        document.addEventListener('alpine:init', () => {
+            // You can remove this in production
+            setTimeout(() => {
+                const app = Alpine.$data(document.querySelector('[x-data="excelComparator()"]'));
+                if (app && app.searchTerm) {
+                    app.searchVersions();
+                }
+            }, 500);
+        });
+    </script>
+</body>
+</html>

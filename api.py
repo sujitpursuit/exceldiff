@@ -491,6 +491,114 @@ class ExcelComparisonAPI:
                     self.logger.info(f"Cleaned up uploaded file: {file_path}")
             except Exception as e:
                 self.logger.warning(f"Failed to cleanup file {file_path}: {e}")
+    
+    def compare_file_versions_by_path(self, file1_path: str, file2_path: str, custom_title: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Compare two Excel files using their file paths directly.
+        This method is used when comparing versions from the database where files are already downloaded.
+        
+        Args:
+            file1_path: Path to the first Excel file (from download_filename)
+            file2_path: Path to the second Excel file (from download_filename)
+            custom_title: Optional custom title for the comparison report
+            
+        Returns:
+            Dictionary with comparison results matching the structure of compare_excel endpoint
+            
+        Raises:
+            HTTPException: If files don't exist or comparison fails
+        """
+        try:
+            self.logger.info(f"Starting version comparison by path: {file1_path} vs {file2_path}")
+            
+            # Step 1: Validate file paths
+            # Convert to Path objects for safer path handling
+            path1 = Path(file1_path)
+            path2 = Path(file2_path)
+            
+            # Make paths absolute if they're relative
+            if not path1.is_absolute():
+                path1 = Path.cwd() / path1
+            if not path2.is_absolute():
+                path2 = Path.cwd() / path2
+            
+            # Check if files exist
+            if not path1.exists():
+                self.logger.error(f"File 1 not found: {path1}")
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"First file not found: {file1_path}. The file may not have been downloaded yet."
+                )
+            
+            if not path2.exists():
+                self.logger.error(f"File 2 not found: {path2}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Second file not found: {file2_path}. The file may not have been downloaded yet."
+                )
+            
+            # Verify files are actually files (not directories)
+            if not path1.is_file():
+                raise HTTPException(status_code=400, detail=f"First path is not a file: {file1_path}")
+            if not path2.is_file():
+                raise HTTPException(status_code=400, detail=f"Second path is not a file: {file2_path}")
+            
+            # Verify files are Excel files
+            allowed_extensions = ['.xlsx', '.xls']
+            if path1.suffix.lower() not in allowed_extensions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"First file is not an Excel file: {path1.suffix}"
+                )
+            if path2.suffix.lower() not in allowed_extensions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Second file is not an Excel file: {path2.suffix}"
+                )
+            
+            # Step 2: Validate Excel files using existing validation
+            if not self.validate_excel_file(str(path1)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"First file is not a valid Excel file: {file1_path}"
+                )
+            
+            if not self.validate_excel_file(str(path2)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Second file is not a valid Excel file: {file2_path}"
+                )
+            
+            # Step 3: Perform comparison using existing logic
+            # This reuses the exact same comparison logic as compare_excel endpoint
+            result = self.perform_comparison(str(path1), str(path2), custom_title)
+            
+            # Log successful comparison
+            self.logger.info(
+                f"Version comparison completed successfully. "
+                f"Total changes: {result['comparison_summary']['total_changes']}"
+            )
+            
+            return result
+            
+        except HTTPException:
+            # Re-raise HTTP exceptions as-is
+            raise
+            
+        except Exception as e:
+            # Log unexpected errors with full traceback for debugging
+            self.logger.error(f"Unexpected error in compare_file_versions_by_path: {e}")
+            self.logger.error(traceback.format_exc())
+            
+            # Create user-friendly error message
+            error_detail = str(e)
+            if isinstance(e, ExcelComparisonError):
+                error_detail = create_user_friendly_message(e)
+            
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to compare files: {error_detail}"
+            )
 
 
 # Initialize API wrapper and database manager
@@ -710,93 +818,89 @@ async def get_file_versions(
 
 @app.post("/api/compare-versions")
 async def compare_file_versions(
-    version1_id: int = Form(..., description="First version ID"),
-    version2_id: int = Form(..., description="Second version ID"),
+    file1_path: str = Form(..., description="Path to first Excel file (from download_filename)"),
+    file2_path: str = Form(..., description="Path to second Excel file (from download_filename)"),
     title: Optional[str] = Form(None, description="Custom title for the report")
 ):
     """
-    Compare two versions of the same file using version IDs from database.
-    **STUBBED FOR NOW - NEEDS TO BE UPDATED BEFORE PRODUCTION USE**
+    Compare two Excel files using their file paths.
+    
+    This endpoint is designed to work with files that are already downloaded
+    from SharePoint and stored locally. The frontend passes the download_filename
+    paths from the version data.
     
     Args:
-        version1_id: ID of the first version to compare
-        version2_id: ID of the second version to compare  
-        title: Optional custom title for the report
+        file1_path: Path to the first Excel file (typically from version's download_filename)
+        file2_path: Path to the second Excel file (typically from version's download_filename)
+        title: Optional custom title for the comparison report
     
     Returns:
-        JSON response with comparison results and report links
+        JSON response with comparison results and report links, matching the
+        structure of the /api/compare-excel endpoint
+        
+    Example Request:
+        POST /api/compare-versions
+        Form Data:
+            file1_path: "downloads/2024/01/mapping_v1.xlsx"
+            file2_path: "downloads/2024/01/mapping_v2.xlsx"
+            title: "Version 1.0 vs Version 2.0"
     """
     try:
-        log_user_action(logger, "Version comparison requested (STUBBED)", f"Versions: {version1_id} vs {version2_id}")
+        # Log the comparison request for debugging and audit
+        log_user_action(
+            logger, 
+            "Version comparison requested", 
+            f"Files: {file1_path} vs {file2_path}"
+        )
         
-        # STUB: Mock file paths instead of checking database
-        file1_path = f"mock_path_version_{version1_id}.xlsx"
-        file2_path = f"mock_path_version_{version2_id}.xlsx"
+        # Validate that paths are provided (not empty strings)
+        if not file1_path or not file1_path.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="file1_path is required and cannot be empty"
+            )
         
-        # STUB: Return mock response instead of actual comparison
-        custom_title = title or f"Version Comparison: v{version1_id} vs v{version2_id}"
+        if not file2_path or not file2_path.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="file2_path is required and cannot be empty"
+            )
         
-        # Mock comparison result
-        mock_result = {
-            "status": "success",
-            "message": "Comparison completed successfully (STUBBED)",
-            "comparison_summary": {
-                "total_changes": 42,  # Mock data
-                "tabs": {
-                    "total_v1": 6,
-                    "total_v2": 6,
-                    "added": 0,
-                    "deleted": 0,
-                    "modified": 2,
-                    "unchanged": 4
-                },
-                "mappings": {
-                    "total_v1": 150,
-                    "total_v2": 158,
-                    "added": 8,
-                    "deleted": 0,
-                    "modified": 34
-                },
-                "changed_tabs": [
-                    {"name": "Tab1", "added": 3, "deleted": 0, "modified": 15},
-                    {"name": "Tab2", "added": 5, "deleted": 0, "modified": 19}
-                ]
-            },
-            "reports": {
-                "html_report": "/reports/diff_reports/mock_comparison.html",
-                "json_report": "/reports/diff_reports/mock_comparison.json",
-                "html_path": "mock_path.html",
-                "json_path": "mock_path.json"
-            },
-            "files_info": {
-                "file1": {"name": f"version_{version1_id}.xlsx", "size": 153720},
-                "file2": {"name": f"version_{version2_id}.xlsx", "size": 182358}
-            },
-            "processing_info": {
-                "timestamp": datetime.now().isoformat(),
-                "total_tabs_compared": 6,
-                "has_errors": False,
-                "errors": []
-            },
-            "version_info": {
-                "version1_id": version1_id,
-                "version2_id": version2_id,
-                "version1_path": file1_path,
-                "version2_path": file2_path
-            },
-            "stub_notice": "This is a stubbed response. Actual comparison logic needs to be implemented."
-        }
+        # Use the new method that handles path-based comparison
+        result = api_wrapper.compare_file_versions_by_path(
+            file1_path=file1_path.strip(),
+            file2_path=file2_path.strip(),
+            custom_title=title
+        )
         
-        log_user_action(logger, "Version comparison completed (STUBBED)", 
-                       f"Versions: {version1_id} vs {version2_id}, Mock changes: {mock_result['comparison_summary']['total_changes']}")
+        # Log successful completion with summary
+        log_user_action(
+            logger,
+            "Version comparison completed",
+            f"Files: {file1_path} vs {file2_path}, "
+            f"Changes: {result['comparison_summary']['total_changes']}"
+        )
         
-        return JSONResponse(content=mock_result)
+        return JSONResponse(content=result)
         
     except HTTPException:
+        # Re-raise HTTP exceptions (these have proper status codes and messages)
         raise
+        
     except Exception as e:
-        logger.error(f"Unexpected error in compare_file_versions: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        # Handle unexpected errors
+        logger.error(f"Unexpected error in compare_file_versions endpoint: {e}")
+        logger.error(traceback.format_exc())
+        
+        # Create user-friendly error message
+        error_detail = str(e)
+        if isinstance(e, ExcelComparisonError):
+            error_detail = create_user_friendly_message(e)
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Internal server error: {error_detail}"
+        )
 
 
 if __name__ == "__main__":
