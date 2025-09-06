@@ -6,24 +6,33 @@ This FastAPI application converts the Excel Source-Target Mapping Comparison CLI
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### 1. Set Environment Variables
+```bash
+# Required: Azure SQL Database connection string
+export DATABASE_URL="Driver={ODBC Driver 17 for SQL Server};Server=your-server.database.windows.net;Database=your-db;Uid=your-user;Pwd=your-password"
+```
+
+### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Start the API Server
+### 3. Start the API Server
 ```bash
 # Development mode (with auto-reload)
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload
 
 # Production mode
 uvicorn api:app --host 0.0.0.0 --port 8000
+
+# Or simply run
+python api.py
 ```
 
-### 3. Access the API
-- **Web Interface**: http://localhost:8000
-- **API Documentation**: http://localhost:8000/docs
-- **Alternative Docs**: http://localhost:8000/redoc
+### 4. Access the Application
+- **Frontend Interface**: http://localhost:8000 (Alpine.js UI for version comparison)
+- **API Documentation**: http://localhost:8000/docs (Swagger UI)
+- **Alternative Docs**: http://localhost:8000/redoc (ReDoc)
 
 ## 📡 API Endpoints
 
@@ -88,6 +97,90 @@ Compare two Excel files and generate reports.
 }
 ```
 
+### Version Management Endpoints
+
+#### `GET /api/files/versions`
+Get all versions of a file from the database.
+
+**Parameters:**
+- `identifier` (required): SharePoint URL or friendly name to search for
+- `search_type` (required): Either "url" or "name"
+
+**Example Request:**
+```
+GET /api/files/versions?identifier=STTM&search_type=name
+GET /api/files/versions?identifier=https://sharepoint.com/file.xlsx&search_type=url
+```
+
+**Response:**
+```json
+{
+    "file_info": {
+        "file_id": 123,
+        "sharepoint_url": "https://sharepoint.com/sites/...",
+        "file_name": "STTM_Mapping.xlsx",
+        "friendly_name": "STTM",
+        "total_versions": 15
+    },
+    "versions": [
+        {
+            "version_id": 456,
+            "sequence_number": 15,
+            "sharepoint_version_id": "15.0",
+            "modified_datetime": "2025-09-03T10:30:00",
+            "file_size_bytes": 182358,
+            "discovered_at": "2025-09-03T11:00:00",
+            "diff_taken": true,
+            "diff_taken_at": "2025-09-03T11:05:00",
+            "downloaded": true,
+            "download_filename": "downloads/2025/09/STTM_v15.xlsx",
+            "downloaded_at": "2025-09-03T11:01:00",
+            "download_error": null,
+            "is_latest": true,
+            "is_available": true
+        }
+    ],
+    "summary": {
+        "total_versions": 15,
+        "available_versions": 12,
+        "latest_version": {...}
+    }
+}
+```
+
+#### `POST /api/compare-versions`
+Compare two Excel files using their file paths (typically from downloaded versions).
+
+**Request:**
+- Content-Type: `application/x-www-form-urlencoded` or `multipart/form-data`
+- Parameters:
+  - `file1_path` (required): Path to first Excel file (from version's download_filename)
+  - `file2_path` (required): Path to second Excel file (from version's download_filename)
+  - `title` (optional): Custom title for the comparison report
+
+**Example Request:**
+```bash
+curl -X POST "http://localhost:8000/api/compare-versions" \
+  -F "file1_path=downloads/2025/09/STTM_v14.xlsx" \
+  -F "file2_path=downloads/2025/09/STTM_v15.xlsx" \
+  -F "title=Version 14 vs Version 15"
+```
+
+**Response:** Same structure as `/api/compare-excel` endpoint
+
+#### `GET /api/download-file`
+Download an Excel file from the server.
+
+**Parameters:**
+- `path` (required): File path from the download_filename field
+
+**Example Request:**
+```
+GET /api/download-file?path=downloads/2025/09/STTM_v15.xlsx
+```
+
+**Response:** Binary file download (Excel file)
+
 ### Utility Endpoints
 
 #### `GET /api/health`
@@ -118,7 +211,7 @@ Get current API configuration.
 ```
 
 #### `GET /`
-Web interface for file upload and testing.
+Frontend interface for version selection and comparison (Alpine.js application).
 
 ## 🔄 Usage Examples
 
@@ -150,7 +243,7 @@ with open("file1.xlsx", "rb") as f1, open("file2.xlsx", "rb") as f2:
     print(f"HTML Report: {result['reports']['html_report']}")
 ```
 
-### JavaScript Example
+### JavaScript Example - File Upload
 ```javascript
 const formData = new FormData();
 formData.append('file1', file1); // File object from input
@@ -165,6 +258,34 @@ fetch('/api/compare-excel', {
 .then(data => {
     console.log('Comparison result:', data);
     // Access reports via data.reports.html_report and data.reports.json_report
+});
+```
+
+### JavaScript Example - Version Comparison
+```javascript
+// First, get file versions
+fetch('/api/files/versions?identifier=STTM&search_type=name')
+.then(response => response.json())
+.then(data => {
+    // Select two versions from data.versions
+    const version1 = data.versions[0];
+    const version2 = data.versions[1];
+    
+    // Compare the versions using their file paths
+    const formData = new FormData();
+    formData.append('file1_path', version1.download_filename);
+    formData.append('file2_path', version2.download_filename);
+    formData.append('title', `Version ${version1.sequence_number} vs ${version2.sequence_number}`);
+    
+    return fetch('/api/compare-versions', {
+        method: 'POST',
+        body: formData
+    });
+})
+.then(response => response.json())
+.then(result => {
+    console.log('Comparison completed:', result);
+    window.open(result.reports.html_report, '_blank');
 });
 ```
 
@@ -218,7 +339,7 @@ All existing configuration from `config.py` is preserved:
 ### Directory Structure
 ```
 project/
-├── api.py                 # FastAPI application
+├── api.py                 # FastAPI application with database integration
 ├── main.py               # Original CLI tool (preserved)
 ├── comparator.py         # Core comparison logic (unchanged)
 ├── report_generator.py   # HTML report generation (unchanged)
@@ -228,7 +349,10 @@ project/
 ├── reports/              # Generated reports
 │   └── diff_reports/     # API-generated comparison reports
 ├── static/               # Static files for web interface
-└── templates/            # Jinja2 templates
+├── templates/            # Frontend templates
+│   └── index.html        # Alpine.js frontend application
+├── FRONTEND_README.md    # Frontend documentation
+└── API_README.md         # This file
 ```
 
 ## 🔧 Development
@@ -274,6 +398,9 @@ CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ### Environment Variables
 ```bash
+# Required
+export DATABASE_URL="Driver={ODBC Driver 17 for SQL Server};Server=...;Database=...;Uid=...;Pwd=..."
+
 # Optional environment configuration
 export API_HOST="0.0.0.0"
 export API_PORT="8000"
@@ -311,8 +438,18 @@ pip install slowapi
 ✅ HTTP REST endpoints  
 ✅ File upload via multipart/form-data  
 ✅ JSON response format  
-✅ Web interface for testing  
+✅ Alpine.js frontend for version comparison  
+✅ Database integration for version management  
+✅ File path-based comparison  
 ✅ Automatic cleanup  
 ✅ CORS support  
 
-The API is a **perfect wrapper** around the existing CLI tool - no functionality is lost or modified.
+### Frontend Features
+✅ Search files by name or SharePoint URL  
+✅ View all versions with metadata  
+✅ Select and compare any two versions  
+✅ Real-time error handling and feedback  
+✅ Direct access to HTML/JSON reports  
+✅ Responsive design with Tailwind CSS  
+
+The API is a **perfect wrapper** around the existing CLI tool - no functionality is lost or modified. The frontend provides an intuitive interface for version selection and comparison.
