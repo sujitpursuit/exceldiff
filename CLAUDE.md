@@ -1,0 +1,1 @@
+- do not expect uvicorn to reload automatically. please always kill/stop server and start a new server on the same port to test any change

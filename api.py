@@ -27,6 +27,9 @@ import uvicorn
 # Import Azure storage service
 from azure_storage_service import get_azure_storage_service, is_azure_path, AzureStorageError
 
+# Import SharePoint services
+from sharepoint import SharePointService, DownloadService
+
 # Load environment variables
 load_dotenv()
 
@@ -253,6 +256,89 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Failed to get version download path: {e}")
             raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+    
+    def get_sharepoint_info(self, version_id: int) -> Dict[str, Any]:
+        """Get SharePoint information for a specific version."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            query = """
+            SELECT 
+                tf.sharepoint_url,
+                tf.file_name,
+                tf.drive_id,
+                tf.item_id,
+                fv.sharepoint_version_id,
+                fv.sequence_number,
+                fv.downloaded,
+                fv.download_filename
+            FROM file_versions fv
+            JOIN tracked_files tf ON fv.file_id = tf.id
+            WHERE fv.id = ? AND tf.is_active = 1
+            """
+            cursor.execute(query, (version_id,))
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Version {version_id} not found")
+            
+            return {
+                "sharepoint_url": row.sharepoint_url,
+                "file_name": row.file_name,
+                "drive_id": row.drive_id,
+                "item_id": row.item_id,
+                "sharepoint_version_id": row.sharepoint_version_id,
+                "sequence_number": row.sequence_number,
+                "downloaded": bool(row.downloaded) if row.downloaded is not None else False,
+                "download_filename": row.download_filename
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.error(f"Failed to get SharePoint info: {e}")
+            raise HTTPException(status_code=500, detail=f"Database query failed: {str(e)}")
+    
+    def update_download_status(self, version_id: int, download_result: Dict[str, Any]) -> bool:
+        """Update download status in the database after SharePoint download."""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if download_result.get("status") == "success":
+                query = """
+                UPDATE file_versions 
+                SET downloaded = 1, 
+                    download_filename = ?, 
+                    downloaded_at = GETDATE(),
+                    download_error = NULL
+                WHERE id = ?
+                """
+                cursor.execute(query, (download_result["local_path"], version_id))
+            else:
+                query = """
+                UPDATE file_versions 
+                SET downloaded = 0, 
+                    download_filename = NULL,
+                    download_error = ?
+                WHERE id = ?
+                """
+                cursor.execute(query, (download_result.get("error", "Unknown error"), version_id))
+            
+            conn.commit()
+            conn.close()
+            
+            self.logger.info(f"Updated download status for version {version_id}: {download_result.get('status')}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update download status: {e}")
+            if 'conn' in locals():
+                conn.rollback()
+                conn.close()
+            return False
 
 
 class ExcelComparisonAPI:
@@ -757,6 +843,102 @@ class ExcelComparisonAPI:
                     AzureStorageService.cleanup_temp_file(temp_file2)
                 except Exception as e:
                     self.logger.warning(f"Failed to cleanup temp file 2: {e}")
+    
+    def compare_versions_with_sharepoint(self, version1_id: int, version2_id: int, 
+                                        custom_title: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Compare two file versions with automatic SharePoint download if needed.
+        
+        This method checks if versions are available locally, downloads from SharePoint
+        if needed, then performs the comparison.
+        
+        Args:
+            version1_id: Database ID of the first version
+            version2_id: Database ID of the second version
+            custom_title: Optional custom title for the comparison report
+            
+        Returns:
+            Dictionary with comparison results
+            
+        Raises:
+            HTTPException: If versions don't exist or comparison fails
+        """
+        try:
+            self.logger.info(f"Starting SharePoint-aware version comparison: {version1_id} vs {version2_id}")
+            
+            # Get version information from database
+            version1_info = db_manager.get_sharepoint_info(version1_id)
+            version2_info = db_manager.get_sharepoint_info(version2_id)
+            
+            # Ensure older version is file1, newer version is file2
+            if version1_info["sequence_number"] > version2_info["sequence_number"]:
+                # Swap if version1 is newer than version2
+                version1_id, version2_id = version2_id, version1_id
+                version1_info, version2_info = version2_info, version1_info
+                self.logger.info(f"Swapped versions for correct order: older={version1_id} vs newer={version2_id}")
+            
+            # Initialize download service
+            download_service = DownloadService()
+            
+            # Check/download version 1 (older)
+            file1_path = self._ensure_version_downloaded(version1_id, version1_info, download_service)
+            # Check/download version 2 (newer)
+            file2_path = self._ensure_version_downloaded(version2_id, version2_info, download_service)
+            
+            # Use the existing comparison logic with older file as file1, newer file as file2
+            return self.compare_file_versions_by_path(
+                file1_path=file1_path,
+                file2_path=file2_path,
+                custom_title=custom_title,
+                db_file_name=version1_info["file_name"]
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.logger.error(f"SharePoint version comparison failed: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to compare SharePoint versions: {str(e)}"
+            )
+    
+    def _ensure_version_downloaded(self, version_id: int, version_info: Dict[str, Any], 
+                                  download_service) -> str:
+        """
+        Ensure a version is downloaded locally, downloading if necessary.
+        
+        Returns the local file path for the version.
+        """
+        # Check if already downloaded and file exists locally
+        if version_info["downloaded"] and version_info["download_filename"]:
+            if download_service.check_local_file(version_info["download_filename"]):
+                self.logger.info(f"Version {version_id} already available locally: {version_info['download_filename']}")
+                return version_info["download_filename"]
+            else:
+                self.logger.warning(f"Version {version_id} marked as downloaded but file missing: {version_info['download_filename']}")
+        
+        # Need to download from SharePoint
+        self.logger.info(f"Downloading version {version_id} from SharePoint")
+        
+        download_result = download_service.download_version(
+            drive_id=version_info["drive_id"],
+            item_id=version_info["item_id"],
+            version_id=version_info["sharepoint_version_id"],
+            file_name=version_info["file_name"],
+            sequence_number=version_info["sequence_number"],
+            force_download=False
+        )
+        
+        if download_result.get("status") != "success":
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to download version {version_id}: {download_result.get('error', 'Unknown error')}"
+            )
+        
+        # Update database
+        db_manager.update_download_status(version_id, download_result)
+        
+        return download_result["local_path"]
 
 
 # Initialize API wrapper and database manager
@@ -1060,6 +1242,235 @@ async def compare_file_versions(
         raise HTTPException(
             status_code=500, 
             detail=f"Internal server error: {error_detail}"
+        )
+
+
+@app.post("/api/download-sharepoint-version")
+async def download_sharepoint_version(
+    version_id: int = Form(..., description="Database ID of the version to download"),
+    force_download: bool = Form(False, description="Force re-download even if file exists locally")
+):
+    """
+    Download a specific version from SharePoint to local storage.
+    
+    This endpoint downloads a file version from SharePoint using Microsoft Graph API
+    and stores it in persistent local storage. If the file already exists locally
+    and force_download is False, it returns the cached file information.
+    
+    Args:
+        version_id: Database ID of the file version to download
+        force_download: If True, re-download even if file exists locally
+    
+    Returns:
+        JSON response with download status and file information
+        
+    Example Request:
+        POST /api/download-sharepoint-version
+        Form Data:
+            version_id: 123
+            force_download: false
+    """
+    try:
+        log_user_action(logger, "SharePoint version download requested", f"Version ID: {version_id}")
+        
+        # Get SharePoint information for this version
+        sharepoint_info = db_manager.get_sharepoint_info(version_id)
+        
+        # Initialize SharePoint services
+        download_service = DownloadService()
+        
+        # Download the version
+        download_result = download_service.download_version(
+            drive_id=sharepoint_info["drive_id"],
+            item_id=sharepoint_info["item_id"],
+            version_id=sharepoint_info["sharepoint_version_id"],
+            file_name=sharepoint_info["file_name"],
+            sequence_number=sharepoint_info["sequence_number"],
+            force_download=force_download
+        )
+        
+        # Update database with download status
+        db_update_success = db_manager.update_download_status(version_id, download_result)
+        
+        if not db_update_success:
+            logger.warning(f"Failed to update download status in database for version {version_id}")
+        
+        # Prepare response
+        response_data = {
+            "version_id": version_id,
+            "download_status": download_result.get("status"),
+            "file_info": {
+                "file_name": sharepoint_info["file_name"],
+                "sequence_number": sharepoint_info["sequence_number"],
+                "sharepoint_version_id": sharepoint_info["sharepoint_version_id"]
+            },
+            "local_storage": {
+                "local_path": download_result.get("local_path"),
+                "full_path": download_result.get("full_path"),
+                "file_size": download_result.get("file_size"),
+                "from_cache": download_result.get("from_cache", False)
+            }
+        }
+        
+        if download_result.get("status") == "success":
+            response_data["message"] = download_result.get("message", "Download completed successfully")
+            log_user_action(
+                logger, 
+                "SharePoint version download completed", 
+                f"Version {version_id}: {download_result.get('file_size', 0)} bytes"
+            )
+        else:
+            response_data["error"] = download_result.get("error", "Unknown download error")
+            response_data["message"] = "Download failed"
+            
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in download_sharepoint_version: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@app.get("/api/get-version-status")
+async def get_version_status(
+    version_id: int = Query(..., description="Database ID of the version to check")
+):
+    """
+    Get the download status and local availability of a SharePoint version.
+    
+    This endpoint checks if a version is downloaded locally and provides
+    information about its status without triggering a download.
+    
+    Args:
+        version_id: Database ID of the file version to check
+    
+    Returns:
+        JSON response with version status information
+        
+    Example Request:
+        GET /api/get-version-status?version_id=123
+    """
+    try:
+        # Get SharePoint information for this version
+        sharepoint_info = db_manager.get_sharepoint_info(version_id)
+        
+        # Initialize download service to check local file
+        download_service = DownloadService()
+        
+        # Check if file exists locally
+        local_file_exists = False
+        file_size = None
+        full_path = None
+        
+        if sharepoint_info["downloaded"] and sharepoint_info["download_filename"]:
+            local_file_exists = download_service.check_local_file(sharepoint_info["download_filename"])
+            if local_file_exists:
+                try:
+                    from pathlib import Path
+                    file_path = Path(sharepoint_info["download_filename"])
+                    if not file_path.is_absolute():
+                        file_path = Path.cwd() / file_path
+                    
+                    if file_path.exists():
+                        file_size = file_path.stat().st_size
+                        full_path = str(file_path.absolute())
+                except Exception as e:
+                    logger.warning(f"Could not get file stats for {sharepoint_info['download_filename']}: {e}")
+        
+        response_data = {
+            "version_id": version_id,
+            "file_info": {
+                "file_name": sharepoint_info["file_name"],
+                "sequence_number": sharepoint_info["sequence_number"],
+                "sharepoint_version_id": sharepoint_info["sharepoint_version_id"]
+            },
+            "download_status": {
+                "downloaded": sharepoint_info["downloaded"],
+                "local_file_exists": local_file_exists,
+                "download_filename": sharepoint_info["download_filename"],
+                "file_size": file_size,
+                "full_path": full_path,
+                "needs_download": not (sharepoint_info["downloaded"] and local_file_exists)
+            }
+        }
+        
+        return JSONResponse(content=response_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_version_status: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@app.post("/api/compare-sharepoint-versions")
+async def compare_sharepoint_versions(
+    version1_id: int = Form(..., description="Database ID of the first version to compare"),
+    version2_id: int = Form(..., description="Database ID of the second version to compare"),
+    title: Optional[str] = Form(None, description="Custom title for the report")
+):
+    """
+    Compare two SharePoint file versions with automatic download.
+    
+    This endpoint compares two file versions by their database IDs, automatically
+    downloading from SharePoint if the files are not available locally.
+    
+    Args:
+        version1_id: Database ID of the first file version
+        version2_id: Database ID of the second file version
+        title: Optional custom title for the comparison report
+    
+    Returns:
+        JSON response with comparison results and report links
+        
+    Example Request:
+        POST /api/compare-sharepoint-versions
+        Form Data:
+            version1_id: 123
+            version2_id: 124
+            title: "Version 1.0 vs Version 2.0"
+    """
+    try:
+        log_user_action(
+            logger, 
+            "SharePoint version comparison requested", 
+            f"Versions: {version1_id} vs {version2_id}"
+        )
+        
+        # Use the new SharePoint-aware comparison method
+        result = api_wrapper.compare_versions_with_sharepoint(
+            version1_id=version1_id,
+            version2_id=version2_id,
+            custom_title=title
+        )
+        
+        # Log successful completion with summary
+        log_user_action(
+            logger,
+            "SharePoint version comparison completed",
+            f"Versions: {version1_id} vs {version2_id}, "
+            f"Changes: {result['comparison_summary']['total_changes']}"
+        )
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in compare_sharepoint_versions: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
         )
 
 
