@@ -269,7 +269,7 @@
             <div x-show="comparisonResult" class="bg-white rounded-lg shadow-md p-6">
                 <h2 class="text-xl font-semibold text-gray-800 mb-4">Comparison Results</h2>
                 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
                     <div class="text-center p-4 bg-blue-50 rounded-lg">
                         <div class="text-2xl font-bold text-blue-600" x-text="comparisonResult?.comparison_summary?.total_changes || 0"></div>
                         <div class="text-sm text-gray-600">Total Changes</div>
@@ -281,6 +281,10 @@
                     <div class="text-center p-4 bg-orange-50 rounded-lg">
                         <div class="text-2xl font-bold text-orange-600" x-text="comparisonResult?.comparison_summary?.mappings?.modified || 0"></div>
                         <div class="text-sm text-gray-600">Modified Mappings</div>
+                    </div>
+                    <div class="text-center p-4 bg-red-50 rounded-lg">
+                        <div class="text-2xl font-bold text-red-600" x-text="comparisonResult?.comparison_summary?.mappings?.deleted || 0"></div>
+                        <div class="text-sm text-gray-600">Deleted Mappings</div>
                     </div>
                 </div>
                 

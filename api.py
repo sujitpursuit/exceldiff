@@ -30,6 +30,9 @@ from azure_storage_service import get_azure_storage_service, is_azure_path, Azur
 # Import SharePoint services
 from sharepoint import SharePointService, DownloadService
 
+# Import comparison storage
+from comparison_storage import ComparisonStorageManager, ComparisonResult
+
 # Load environment variables
 load_dotenv()
 
@@ -885,13 +888,34 @@ class ExcelComparisonAPI:
             # Check/download version 2 (newer)
             file2_path = self._ensure_version_downloaded(version2_id, version2_info, download_service)
             
+            # Track comparison timing
+            import time
+            comparison_start_time = time.time()
+            
             # Use the existing comparison logic with older file as file1, newer file as file2
-            return self.compare_file_versions_by_path(
+            comparison_result = self.compare_file_versions_by_path(
                 file1_path=file1_path,
                 file2_path=file2_path,
                 custom_title=custom_title,
                 db_file_name=version1_info["file_name"]
             )
+            
+            # Calculate duration
+            comparison_duration = time.time() - comparison_start_time
+            
+            # Store comparison result in database
+            try:
+                comparison_id = self._store_comparison_result(
+                    version1_id, version2_id, comparison_result, 
+                    custom_title, comparison_duration
+                )
+                if comparison_id:
+                    comparison_result['comparison_id'] = comparison_id
+            except Exception as e:
+                self.logger.warning(f"Failed to store comparison result: {e}")
+                # Don't fail the comparison if storage fails
+            
+            return comparison_result
             
         except HTTPException:
             raise
@@ -901,6 +925,73 @@ class ExcelComparisonAPI:
                 status_code=500,
                 detail=f"Failed to compare SharePoint versions: {str(e)}"
             )
+    
+    def _store_comparison_result(self, version1_id: int, version2_id: int, 
+                               comparison_result: Dict[str, Any], 
+                               title: Optional[str], 
+                               duration: Optional[float]) -> Optional[int]:
+        """
+        Store comparison result in database using ComparisonStorageManager.
+        
+        Args:
+            version1_id: First version ID
+            version2_id: Second version ID 
+            comparison_result: Result dictionary from comparison
+            title: Optional comparison title
+            duration: Comparison duration in seconds
+            
+        Returns:
+            Comparison ID if successful, None if failed
+        """
+        try:
+            # Extract statistics from comparison result
+            comparison_summary = comparison_result.get('comparison_summary', {})
+            total_changes = comparison_summary.get('total_changes', 0)
+            
+            # Extract mapping statistics
+            mappings = comparison_summary.get('mappings', {})
+            added_mappings = mappings.get('added', 0)
+            modified_mappings = mappings.get('modified', 0)
+            deleted_mappings = mappings.get('deleted', 0)
+            
+            # Extract tabs statistics
+            tabs = comparison_summary.get('tabs', {})
+            tabs_compared = tabs.get('total_v2', 0)  # Use total tabs in v2 as tabs compared
+            
+            # Get report URLs from comparison result
+            reports = comparison_result.get('reports', {})
+            html_report_url = reports.get('azure_html_url')
+            json_report_url = reports.get('azure_json_url')
+            local_html_path = reports.get('html_path')
+            local_json_path = reports.get('json_path')
+            
+            # Create ComparisonResult object
+            result_data = ComparisonResult(
+                file1_version_id=version1_id,
+                file2_version_id=version2_id,
+                comparison_title=title,
+                comparison_status='completed',
+                html_report_url=html_report_url,
+                json_report_url=json_report_url,
+                local_html_path=local_html_path,
+                local_json_path=local_json_path,
+                total_changes=total_changes,
+                added_mappings=added_mappings,
+                modified_mappings=modified_mappings,
+                deleted_mappings=deleted_mappings,
+                tabs_compared=tabs_compared,
+                comparison_duration_seconds=duration,
+                user_notes=None
+            )
+            
+            # Store in database using global comparison_storage instance
+            comparison_id = comparison_storage.store_comparison_result(result_data)
+            self.logger.info(f"Stored comparison result with ID {comparison_id}")
+            return comparison_id
+            
+        except Exception as e:
+            self.logger.error(f"Failed to store comparison result: {e}")
+            return None
     
     def _ensure_version_downloaded(self, version_id: int, version_info: Dict[str, Any], 
                                   download_service) -> str:
@@ -944,6 +1035,7 @@ class ExcelComparisonAPI:
 # Initialize API wrapper and database manager
 api_wrapper = ExcelComparisonAPI()
 db_manager = DatabaseManager()
+comparison_storage = ComparisonStorageManager(DATABASE_URL, get_logger("comparison_storage"))
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1467,6 +1559,39 @@ async def compare_sharepoint_versions(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in compare_sharepoint_versions: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+@app.get("/api/comparison/{comparison_id}")
+async def get_comparison_result(comparison_id: int):
+    """
+    Retrieve a stored comparison result by ID.
+    
+    Args:
+        comparison_id: The ID of the comparison to retrieve
+        
+    Returns:
+        JSON response with comparison result data
+    """
+    try:
+        result = comparison_storage.get_comparison_by_id(comparison_id)
+        
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Comparison with ID {comparison_id} not found"
+            )
+        
+        return JSONResponse(content=result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_comparison_result: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
