@@ -12,7 +12,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, Tuple, List
 import traceback
 import pyodbc
 from dotenv import load_dotenv
@@ -23,6 +23,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
+
+# Import Azure storage service
+from azure_storage_service import get_azure_storage_service, is_azure_path, AzureStorageError
 
 # Load environment variables
 load_dotenv()
@@ -290,7 +293,9 @@ class ExcelComparisonAPI:
             self.logger.error(f"File validation failed: {e}")
             return False
     
-    def perform_comparison(self, file1_path: str, file2_path: str, custom_title: Optional[str] = None) -> Dict[str, Any]:
+    def perform_comparison(self, file1_path: str, file2_path: str, custom_title: Optional[str] = None, 
+                          original_file1_path: Optional[str] = None, original_file2_path: Optional[str] = None,
+                          db_file_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Perform comparison using existing logic and return structured response.
         This preserves ALL existing functionality without modification.
@@ -306,7 +311,10 @@ class ExcelComparisonAPI:
                 self.logger.warning(f"Comparison completed with errors: {comparison_result.errors}")
             
             # Generate report files using existing logic
-            report_paths = self.generate_reports(comparison_result, file1_path, file2_path, custom_title)
+            # Pass original paths for Azure folder naming, fallback to actual paths
+            paths_for_naming = (original_file1_path or file1_path, original_file2_path or file2_path)
+            report_paths = self.generate_reports(comparison_result, file1_path, file2_path, custom_title, 
+                                                original_paths=paths_for_naming, db_file_name=db_file_name)
             
             # Prepare API response
             response_data = {
@@ -342,8 +350,9 @@ class ExcelComparisonAPI:
                 detail=f"Comparison failed: {create_user_friendly_message(e) if isinstance(e, ExcelComparisonError) else str(e)}"
             )
     
-    def generate_reports(self, result, file1_path: str, file2_path: str, custom_title: Optional[str] = None) -> Dict[str, str]:
-        """Generate HTML and JSON reports using existing logic."""
+    def generate_reports(self, result, file1_path: str, file2_path: str, custom_title: Optional[str] = None, 
+                        original_paths: Optional[Tuple[str, str]] = None, db_file_name: Optional[str] = None) -> Dict[str, str]:
+        """Generate HTML and JSON reports using existing logic and optionally upload to Azure."""
         try:
             # Generate filenames using simplified logic to avoid Windows path length issues
             timestamp = datetime.now().strftime(config.REPORT_TIMESTAMP_FORMAT)
@@ -418,13 +427,87 @@ class ExcelComparisonAPI:
             
             self.logger.info(f"Reports generated successfully: HTML={html_path}, JSON={json_path}")
             
-            # Return paths accessible via HTTP
-            return {
+            # Prepare response with local paths (existing functionality)
+            response = {
                 "html_report": f"/reports/{config.DIFF_REPORTS_DIR}/{html_path.name}",
                 "json_report": f"/reports/{config.DIFF_REPORTS_DIR}/{json_path.name}",
                 "html_path": str(html_path),
                 "json_path": str(json_path)
             }
+            
+            # Upload reports to Azure (mandatory for API compatibility)
+            try:
+                azure_service = get_azure_storage_service()
+                
+                # Extract base filename for Azure folder structure
+                # Use db_file_name if provided (preferred), otherwise fall back to parsing
+                base_name = None
+                
+                if db_file_name:
+                    # Use the file_name from database directly - no parsing needed
+                    # Remove extension if present
+                    base_name = Path(db_file_name).stem if db_file_name else None
+                    self.logger.info(f"Using database file_name for Azure folder: {base_name}")
+                elif original_paths:
+                    # Fall back to original parsing logic if db_file_name not provided
+                    original_file1_path, original_file2_path = original_paths
+                    if original_file1_path:
+                        # For Azure URLs, extract the blob name which has the original filename
+                        original_name = Path(original_file1_path).name if not original_file1_path.startswith('http') else original_file1_path.split('/')[-1]
+                        # URL decode in case the filename has spaces
+                        from urllib.parse import unquote
+                        original_name = unquote(original_name)
+                        self.logger.info(f"Extracted original filename from file1: {original_name}")
+                        base_name = azure_service.extract_base_filename(original_name)
+                    elif original_file2_path:
+                        original_name = Path(original_file2_path).name if not original_file2_path.startswith('http') else original_file2_path.split('/')[-1]
+                        from urllib.parse import unquote
+                        original_name = unquote(original_name)
+                        self.logger.info(f"Extracted original filename from file2: {original_name}")
+                        base_name = azure_service.extract_base_filename(original_name)
+                
+                if not base_name:
+                    base_name = "Comparison Reports"
+                
+                self.logger.info(f"Using Azure folder base name: {base_name}")
+                
+                # Upload HTML report to Azure - MANDATORY
+                azure_html_url = azure_service.upload_report_to_azure(
+                    str(html_path), 
+                    base_name, 
+                    html_filename
+                )
+                
+                # Upload JSON report to Azure - MANDATORY
+                azure_json_url = azure_service.upload_report_to_azure(
+                    str(json_path), 
+                    base_name, 
+                    json_filename
+                )
+                
+                # Add Azure URLs to response (always present)
+                response["azure_html_url"] = azure_html_url
+                response["azure_json_url"] = azure_json_url
+                response["azure_html_blob"] = f"{base_name}/{html_filename}"
+                response["azure_json_blob"] = f"{base_name}/{json_filename}"
+                
+                self.logger.info(f"HTML report uploaded to Azure: {azure_html_url}")
+                self.logger.info(f"JSON report uploaded to Azure: {azure_json_url}")
+                
+            except AzureStorageError as e:
+                self.logger.error(f"Azure storage error during report upload: {e}")
+                raise ReportGenerationError(
+                    "Azure report upload failed", 
+                    f"Reports could not be uploaded to Azure blob storage: {str(e)}"
+                )
+            except Exception as e:
+                self.logger.error(f"Unexpected error during Azure upload: {e}")
+                raise ReportGenerationError(
+                    "Azure report upload failed", 
+                    f"Unexpected error uploading reports to Azure: {str(e)}"
+                )
+            
+            return response
             
         except Exception as e:
             self.logger.error(f"Report generation failed: {e}")
@@ -492,14 +575,15 @@ class ExcelComparisonAPI:
             except Exception as e:
                 self.logger.warning(f"Failed to cleanup file {file_path}: {e}")
     
-    def compare_file_versions_by_path(self, file1_path: str, file2_path: str, custom_title: Optional[str] = None) -> Dict[str, Any]:
+    def compare_file_versions_by_path(self, file1_path: str, file2_path: str, custom_title: Optional[str] = None, 
+                                      db_file_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Compare two Excel files using their file paths directly.
-        This method is used when comparing versions from the database where files are already downloaded.
+        This method supports both local file paths and Azure blob paths.
         
         Args:
-            file1_path: Path to the first Excel file (from download_filename)
-            file2_path: Path to the second Excel file (from download_filename)
+            file1_path: Path to the first Excel file (local path or Azure blob path)
+            file2_path: Path to the second Excel file (local path or Azure blob path)
             custom_title: Optional custom title for the comparison report
             
         Returns:
@@ -508,70 +592,120 @@ class ExcelComparisonAPI:
         Raises:
             HTTPException: If files don't exist or comparison fails
         """
+        temp_file1 = None
+        temp_file2 = None
+        
         try:
             self.logger.info(f"Starting version comparison by path: {file1_path} vs {file2_path}")
             
-            # Step 1: Validate file paths
-            # Convert to Path objects for safer path handling
-            path1 = Path(file1_path)
-            path2 = Path(file2_path)
+            # Step 1: Determine if files are local or Azure blobs
+            file1_is_azure = is_azure_path(file1_path)
+            file2_is_azure = is_azure_path(file2_path)
             
-            # Make paths absolute if they're relative
-            if not path1.is_absolute():
-                path1 = Path.cwd() / path1
-            if not path2.is_absolute():
-                path2 = Path.cwd() / path2
+            self.logger.info(f"File 1 is Azure blob: {file1_is_azure}")
+            self.logger.info(f"File 2 is Azure blob: {file2_is_azure}")
             
-            # Check if files exist
-            if not path1.exists():
-                self.logger.error(f"File 1 not found: {path1}")
-                raise HTTPException(
-                    status_code=404, 
-                    detail=f"First file not found: {file1_path}. The file may not have been downloaded yet."
-                )
+            # Step 2: Get local file paths (download from Azure if needed)
+            if file1_is_azure:
+                try:
+                    azure_service = get_azure_storage_service()
+                    temp_file1 = azure_service.download_blob_to_temp(file1_path)
+                    actual_file1_path = temp_file1
+                    self.logger.info(f"Downloaded file 1 from Azure to: {temp_file1}")
+                except AzureStorageError as e:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Failed to download first file from Azure: {str(e)}"
+                    )
+            else:
+                # Local file - validate path
+                path1 = Path(file1_path)
+                if not path1.is_absolute():
+                    path1 = Path.cwd() / path1
+                
+                if not path1.exists():
+                    self.logger.error(f"Local file 1 not found: {path1}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"First file not found: {file1_path}"
+                    )
+                
+                if not path1.is_file():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"First path is not a file: {file1_path}"
+                    )
+                
+                actual_file1_path = str(path1)
             
-            if not path2.exists():
-                self.logger.error(f"File 2 not found: {path2}")
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Second file not found: {file2_path}. The file may not have been downloaded yet."
-                )
+            if file2_is_azure:
+                try:
+                    azure_service = get_azure_storage_service()
+                    temp_file2 = azure_service.download_blob_to_temp(file2_path)
+                    actual_file2_path = temp_file2
+                    self.logger.info(f"Downloaded file 2 from Azure to: {temp_file2}")
+                except AzureStorageError as e:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Failed to download second file from Azure: {str(e)}"
+                    )
+            else:
+                # Local file - validate path
+                path2 = Path(file2_path)
+                if not path2.is_absolute():
+                    path2 = Path.cwd() / path2
+                
+                if not path2.exists():
+                    self.logger.error(f"Local file 2 not found: {path2}")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Second file not found: {file2_path}"
+                    )
+                
+                if not path2.is_file():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Second path is not a file: {file2_path}"
+                    )
+                
+                actual_file2_path = str(path2)
             
-            # Verify files are actually files (not directories)
-            if not path1.is_file():
-                raise HTTPException(status_code=400, detail=f"First path is not a file: {file1_path}")
-            if not path2.is_file():
-                raise HTTPException(status_code=400, detail=f"Second path is not a file: {file2_path}")
-            
-            # Verify files are Excel files
+            # Step 3: Validate file extensions
             allowed_extensions = ['.xlsx', '.xls']
-            if path1.suffix.lower() not in allowed_extensions:
+            
+            file1_ext = Path(actual_file1_path).suffix.lower()
+            file2_ext = Path(actual_file2_path).suffix.lower()
+            
+            if file1_ext not in allowed_extensions:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"First file is not an Excel file: {path1.suffix}"
-                )
-            if path2.suffix.lower() not in allowed_extensions:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Second file is not an Excel file: {path2.suffix}"
+                    detail=f"First file is not an Excel file: {file1_ext}"
                 )
             
-            # Step 2: Validate Excel files using existing validation
-            if not self.validate_excel_file(str(path1)):
+            if file2_ext not in allowed_extensions:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"First file is not a valid Excel file: {file1_path}"
+                    detail=f"Second file is not an Excel file: {file2_ext}"
                 )
             
-            if not self.validate_excel_file(str(path2)):
+            # Step 4: Validate Excel files using existing validation
+            if not self.validate_excel_file(actual_file1_path):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Second file is not a valid Excel file: {file2_path}"
+                    detail=f"First file is not a valid Excel file"
                 )
             
-            # Step 3: Perform comparison using existing logic
+            if not self.validate_excel_file(actual_file2_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Second file is not a valid Excel file"
+                )
+            
+            # Step 5: Perform comparison using existing logic
             # This reuses the exact same comparison logic as compare_excel endpoint
-            result = self.perform_comparison(str(path1), str(path2), custom_title)
+            result = self.perform_comparison(actual_file1_path, actual_file2_path, custom_title, 
+                                           original_file1_path=file1_path, original_file2_path=file2_path,
+                                           db_file_name=db_file_name)
             
             # Log successful comparison
             self.logger.info(
@@ -584,6 +718,14 @@ class ExcelComparisonAPI:
         except HTTPException:
             # Re-raise HTTP exceptions as-is
             raise
+            
+        except AzureStorageError as e:
+            # Handle Azure-specific errors
+            self.logger.error(f"Azure storage error in compare_file_versions_by_path: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Azure storage error: {str(e)}"
+            )
             
         except Exception as e:
             # Log unexpected errors with full traceback for debugging
@@ -599,6 +741,22 @@ class ExcelComparisonAPI:
                 status_code=500,
                 detail=f"Failed to compare files: {error_detail}"
             )
+            
+        finally:
+            # Clean up temporary Azure files
+            if temp_file1:
+                try:
+                    from azure_storage_service import AzureStorageService
+                    AzureStorageService.cleanup_temp_file(temp_file1)
+                except Exception as e:
+                    self.logger.warning(f"Failed to cleanup temp file 1: {e}")
+                    
+            if temp_file2:
+                try:
+                    from azure_storage_service import AzureStorageService
+                    AzureStorageService.cleanup_temp_file(temp_file2)
+                except Exception as e:
+                    self.logger.warning(f"Failed to cleanup temp file 2: {e}")
 
 
 # Initialize API wrapper and database manager
@@ -820,7 +978,8 @@ async def get_file_versions(
 async def compare_file_versions(
     file1_path: str = Form(..., description="Path to first Excel file (from download_filename)"),
     file2_path: str = Form(..., description="Path to second Excel file (from download_filename)"),
-    title: Optional[str] = Form(None, description="Custom title for the report")
+    title: Optional[str] = Form(None, description="Custom title for the report"),
+    file_name: Optional[str] = Form(None, description="Database file_name for Azure folder naming")
 ):
     """
     Compare two Excel files using their file paths.
@@ -870,7 +1029,8 @@ async def compare_file_versions(
         result = api_wrapper.compare_file_versions_by_path(
             file1_path=file1_path.strip(),
             file2_path=file2_path.strip(),
-            custom_title=title
+            custom_title=title,
+            db_file_name=file_name
         )
         
         # Log successful completion with summary

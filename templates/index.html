@@ -242,23 +242,56 @@
                     </div>
                 </div>
                 
-                <div class="flex gap-4 justify-center">
-                    <a 
-                        x-show="comparisonResult?.reports?.html_report"
-                        :href="comparisonResult?.reports?.html_report"
-                        target="_blank"
-                        class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
-                    >
-                        View HTML Report
-                    </a>
-                    <a 
-                        x-show="comparisonResult?.reports?.json_report"
-                        :href="comparisonResult?.reports?.json_report"
-                        target="_blank"
-                        class="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700"
-                    >
-                        Download JSON Report
-                    </a>
+                <!-- Local Reports -->
+                <div x-show="comparisonResult?.reports?.html_report || comparisonResult?.reports?.json_report" class="mb-4">
+                    <h3 class="text-sm font-semibold text-gray-600 text-center mb-2">Local Reports</h3>
+                    <div class="flex gap-4 justify-center">
+                        <a 
+                            x-show="comparisonResult?.reports?.html_report"
+                            :href="comparisonResult?.reports?.html_report"
+                            target="_blank"
+                            class="bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700"
+                        >
+                            View HTML (Local)
+                        </a>
+                        <a 
+                            x-show="comparisonResult?.reports?.json_report"
+                            :href="comparisonResult?.reports?.json_report"
+                            target="_blank"
+                            class="bg-gray-600 text-white px-6 py-2 rounded-md hover:bg-gray-700"
+                        >
+                            Download JSON (Local)
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Azure Reports -->
+                <div x-show="comparisonResult?.reports?.azure_html_url || comparisonResult?.reports?.azure_json_url">
+                    <h3 class="text-sm font-semibold text-gray-600 text-center mb-2">Cloud Reports (Azure)</h3>
+                    <div class="flex gap-4 justify-center">
+                        <a 
+                            x-show="comparisonResult?.reports?.azure_html_url"
+                            :href="comparisonResult?.reports?.azure_html_url"
+                            target="_blank"
+                            class="bg-green-600 text-white px-6 py-2 rounded-md hover:bg-green-700 flex items-center gap-2"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"></path>
+                            </svg>
+                            View HTML (Azure)
+                        </a>
+                        <a 
+                            x-show="comparisonResult?.reports?.azure_json_url"
+                            :href="comparisonResult?.reports?.azure_json_url"
+                            target="_blank"
+                            class="bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 flex items-center gap-2"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                            </svg>
+                            Download JSON (Azure)
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
@@ -379,6 +412,11 @@
                         const formData = new FormData();
                         formData.append('file1_path', file1Path);  // Path to first Excel file
                         formData.append('file2_path', file2Path);  // Path to second Excel file
+                        
+                        // Pass the file_name from fileInfo for Azure folder naming
+                        if (this.fileInfo && this.fileInfo.file_name) {
+                            formData.append('file_name', this.fileInfo.file_name);
+                        }
                         
                         // Create descriptive title showing which versions are being compared
                         const title = `Version ${this.selectedVersions[0].sequence_number} vs Version ${this.selectedVersions[1].sequence_number}`;
