@@ -10,6 +10,15 @@ This FastAPI application converts the Excel Source-Target Mapping Comparison CLI
 ```bash
 # Required: Azure SQL Database connection string
 export DATABASE_URL="Driver={ODBC Driver 17 for SQL Server};Server=your-server.database.windows.net;Database=your-db;Uid=your-user;Pwd=your-password"
+
+# Required for Azure Storage integration
+export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=your-account;AccountKey=your-key;EndpointSuffix=core.windows.net"
+export AZURE_STORAGE_CONTAINER_NAME="excel-files"
+export STORAGE_TYPE="azure"
+
+# Required for Azure Reports Upload
+export AZURE_REPORTS_CONTAINER_NAME="diff-reports"
+export UPLOAD_REPORTS_TO_AZURE="true"
 ```
 
 ### 2. Install Dependencies
@@ -33,6 +42,29 @@ python api.py
 - **Frontend Interface**: http://localhost:8000 (Alpine.js UI for version comparison)
 - **API Documentation**: http://localhost:8000/docs (Swagger UI)
 - **Alternative Docs**: http://localhost:8000/redoc (ReDoc)
+
+## 🆕 New Features
+
+### Azure Blob Storage Integration
+- **Excel File Storage**: Supports downloading Excel files directly from Azure Blob Storage
+- **Automatic Detection**: Recognizes Azure blob URLs and handles them transparently
+- **Temporary File Management**: Downloads Azure files to temp storage for processing, with automatic cleanup
+
+### Azure Reports Upload
+- **Mandatory Upload**: All generated reports are automatically uploaded to Azure Blob Storage
+- **SAS URL Generation**: Creates secure, time-limited (7-day) access URLs for reports
+- **No Public Access Required**: Works with private storage accounts using SAS tokens
+- **Dynamic Folder Structure**: Uses database `file_name` field for consistent folder naming
+
+### Enhanced Report Access
+- **Dual Access Points**: Both local server URLs and Azure SAS URLs provided in API response
+- **Shareable Links**: Azure URLs can be shared with external teams
+- **Secure Access**: SAS tokens provide read-only, time-limited access
+
+### File Name Based Organization
+- **Database Integration**: Uses `tracked_files.file_name` field for Azure folder naming
+- **Consistent Structure**: All versions of a file share the same Azure folder
+- **Fallback Support**: Automatically parses filename patterns if `file_name` not provided
 
 ## 📡 API Endpoints
 
@@ -82,7 +114,11 @@ Compare two Excel files and generate reports.
     },
     "reports": {
         "html_report": "/reports/diff_reports/comparison_file1_vs_file2_20250903_142433.html",
-        "json_report": "/reports/diff_reports/comparison_file1_vs_file2_20250903_142433.json"
+        "json_report": "/reports/diff_reports/comparison_file1_vs_file2_20250903_142433.json",
+        "azure_html_url": "https://stexceldifffiles.blob.core.windows.net/diff-reports/STTM_Master_Mapping/comparison_file1_vs_file2_20250903_142433.html?se=2025-09-14T02%3A15%3A59Z&sp=r&sv=2025-07-05&sr=b&sig=xxx",
+        "azure_json_url": "https://stexceldifffiles.blob.core.windows.net/diff-reports/STTM_Master_Mapping/comparison_file1_vs_file2_20250903_142433.json?se=2025-09-14T02%3A15%3A59Z&sp=r&sv=2025-07-05&sr=b&sig=yyy",
+        "azure_html_blob": "STTM_Master_Mapping/comparison_file1_vs_file2_20250903_142433.html",
+        "azure_json_blob": "STTM_Master_Mapping/comparison_file1_vs_file2_20250903_142433.json"
     },
     "files_info": {
         "file1": {"name": "STTM_original.xlsx", "size": 153720},
@@ -149,24 +185,35 @@ GET /api/files/versions?identifier=https://sharepoint.com/file.xlsx&search_type=
 ```
 
 #### `POST /api/compare-versions`
-Compare two Excel files using their file paths (typically from downloaded versions).
+Compare two Excel files using their file paths (supports both local paths and Azure blob URLs).
 
 **Request:**
 - Content-Type: `application/x-www-form-urlencoded` or `multipart/form-data`
 - Parameters:
-  - `file1_path` (required): Path to first Excel file (from version's download_filename)
-  - `file2_path` (required): Path to second Excel file (from version's download_filename)
+  - `file1_path` (required): Path to first Excel file (local path or Azure blob URL)
+  - `file2_path` (required): Path to second Excel file (local path or Azure blob URL)
   - `title` (optional): Custom title for the comparison report
+  - `file_name` (optional): Database file_name for Azure folder naming (e.g., "STTM_Master_Mapping.xlsx")
 
-**Example Request:**
+**Example Request (Local Files):**
 ```bash
 curl -X POST "http://localhost:8000/api/compare-versions" \
   -F "file1_path=downloads/2025/09/STTM_v14.xlsx" \
   -F "file2_path=downloads/2025/09/STTM_v15.xlsx" \
-  -F "title=Version 14 vs Version 15"
+  -F "title=Version 14 vs Version 15" \
+  -F "file_name=STTM_Master_Mapping.xlsx"
 ```
 
-**Response:** Same structure as `/api/compare-excel` endpoint
+**Example Request (Azure URLs):**
+```bash
+curl -X POST "http://localhost:8000/api/compare-versions" \
+  -F "file1_path=https://stexceldifffiles.blob.core.windows.net/excel-files/STTM_v14.xlsx" \
+  -F "file2_path=https://stexceldifffiles.blob.core.windows.net/excel-files/STTM_v15.xlsx" \
+  -F "title=Azure Files Comparison" \
+  -F "file_name=STTM_Master_Mapping.xlsx"
+```
+
+**Response:** Enhanced structure with both local and Azure report URLs
 
 #### `GET /api/download-file`
 Download an Excel file from the server.

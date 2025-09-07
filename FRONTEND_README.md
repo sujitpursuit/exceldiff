@@ -62,9 +62,14 @@ The Excel Version Comparison Tool frontend is a single-page application built wi
   - Total changes count
   - Added mappings count
   - Modified mappings count
-- Links to generated reports:
-  - HTML report (opens in new tab)
-  - JSON report (downloadable)
+- Dual report access:
+  - **Local Reports**: Server-hosted files for fast access
+    - HTML report (opens in new tab)
+    - JSON report (downloadable)
+  - **Cloud Reports (Azure)**: Shareable Azure-hosted files with SAS URLs
+    - HTML report with cloud icon (opens in new tab)
+    - JSON report with cloud icon (downloadable)
+    - Secure access via time-limited SAS tokens (7-day expiry)
 
 ## User Interface Components
 
@@ -101,7 +106,8 @@ The Excel Version Comparison Tool frontend is a single-page application built wi
 ### Results Panel
 ```html
 - Statistics cards (Total/Added/Modified)
-- Report download buttons
+- Local report buttons (blue/gray)
+- Azure report buttons with cloud icons (green/indigo)
 - Success/error messages
 ```
 
@@ -143,13 +149,15 @@ GET /api/files/versions?identifier={search}&search_type={type}
 ```javascript
 POST /api/compare-versions
 FormData: {
-    file1_path: string,  // Path from version.download_filename
-    file2_path: string,  // Path from version.download_filename
-    title: string        // Optional custom title
+    file1_path: string,    // Path from version.download_filename or Azure URL
+    file2_path: string,    // Path from version.download_filename or Azure URL
+    title: string,         // Optional custom title
+    file_name: string      // Optional database file_name for Azure folder naming
 }
 ```
-- Compares two Excel files by their paths
-- Returns comparison results and report links
+- Compares two Excel files by their paths (local or Azure)
+- Returns comparison results with both local and Azure report links
+- Uses file_name for consistent Azure folder structure when provided
 
 ## Error Handling
 
@@ -163,10 +171,11 @@ The frontend implements comprehensive error handling:
 ## Visual Feedback
 
 ### Color Coding
-- **Green** - Available versions, success messages
+- **Green** - Available versions, success messages, Azure HTML reports
 - **Red** - Errors, unavailable items
-- **Blue** - Selected items, primary actions
-- **Gray** - Disabled/unavailable states
+- **Blue** - Selected items, primary actions, local HTML reports
+- **Gray** - Disabled/unavailable states, local JSON reports
+- **Indigo** - Azure JSON reports
 
 ### Interactive States
 - Hover effects on clickable elements
